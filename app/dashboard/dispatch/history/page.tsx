@@ -1,7 +1,7 @@
 import React from "react";
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase/server";
-import { Truck, Plus, ArrowLeft, History, FileText, ArrowUpRight } from "lucide-react";
+import { Plus, History, FileText, ArrowUpRight, Truck } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -18,21 +18,10 @@ export default async function DispatchHistoryPage() {
   const dispatchList = dispatches || [];
 
   return (
-    <div className="min-h-screen bg-[#090d16] text-slate-100 p-6 md:p-10 font-sans space-y-8 max-w-6xl mx-auto">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-800/80">
         <div>
-          <div className="flex items-center gap-2 text-xs font-medium text-slate-400 mb-1">
-            <Link
-              href="/dashboard?tab=inventory"
-              className="hover:text-emerald-400 transition-colors flex items-center gap-1"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              Back to Inventory
-            </Link>
-            <span>/</span>
-            <span className="text-slate-200">Dispatch History</span>
-          </div>
           <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
             <History className="w-6 h-6 text-emerald-400 stroke-[2.2]" />
             Stock Dispatch History

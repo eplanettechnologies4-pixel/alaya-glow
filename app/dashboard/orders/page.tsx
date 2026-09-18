@@ -1,13 +1,11 @@
 import React from "react";
-import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase/server";
 import OrdersView, { OrderData, OrderLineItem } from "@/components/orders/OrdersView";
-import { ShoppingCart, ArrowLeft, Package, Sparkles } from "lucide-react";
+import { ShoppingCart } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
 export default async function OrdersPage() {
-  // Query orders joined with customer and line items
   const { data: rawOrders, error } = await supabaseServer
     .from("orders")
     .select(
@@ -78,31 +76,16 @@ export default async function OrdersPage() {
   });
 
   return (
-    <div className="min-h-screen bg-[#090d16] text-slate-100 p-6 md:p-10 font-sans space-y-8 max-w-7xl mx-auto">
-      {/* Header */}
-      <div>
-        <div className="flex items-center gap-2 text-xs font-medium text-slate-400 mb-1">
-          <Link
-            href="/dashboard"
-            className="hover:text-emerald-400 transition-colors flex items-center gap-1"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            Dashboard
-          </Link>
-          <span>/</span>
-          <span className="text-slate-200">Orders Management</span>
-        </div>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
-              <ShoppingCart className="w-6 h-6 text-emerald-400 stroke-[2.2]" />
-              Customer Orders
-            </h1>
-            <p className="text-xs text-slate-400 mt-1">
-              Live order feed updated in real time via Shopify webhooks &amp; Supabase Realtime.
-            </p>
-          </div>
-        </div>
+    <div className="space-y-6">
+      {/* Page Header */}
+      <div className="pb-2 border-b border-slate-800/80">
+        <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
+          <ShoppingCart className="w-6 h-6 text-emerald-400 stroke-[2.2]" />
+          Customer Orders
+        </h1>
+        <p className="text-xs text-slate-400 mt-1">
+          Live order feed updated in real time via Shopify webhooks &amp; Supabase Realtime.
+        </p>
       </div>
 
       <OrdersView initialOrders={initialOrders} />

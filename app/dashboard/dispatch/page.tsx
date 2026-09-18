@@ -50,7 +50,7 @@ export default async function DispatchPage() {
     .filter(Boolean) as DispatchableItem[];
 
   return (
-    <div className="min-h-screen bg-[#090d16] text-slate-100 p-6 md:p-10 font-sans">
+    <div className="space-y-6">
       <DispatchForm availableItems={availableItems} />
     </div>
   );
