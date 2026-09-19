@@ -3,7 +3,7 @@ import { queryShopifyAdmin } from "@/lib/shopify/client";
 
 export const dynamic = "force-dynamic";
 
-const TUNNEL_BASE_URL = "https://resorts-joint-including-dallas.trycloudflare.com";
+const TUNNEL_BASE_URL = "https://labor-sic-tackle-temple.trycloudflare.com";
 
 const SUBSCRIPTIONS = [
   {
@@ -21,6 +21,14 @@ const SUBSCRIPTIONS = [
   {
     topic: "ORDERS_CREATE",
     callbackUrl: `${TUNNEL_BASE_URL}/api/webhooks/orders`,
+  },
+  {
+    topic: "ORDERS_DELETE",
+    callbackUrl: `${TUNNEL_BASE_URL}/api/webhooks/orders-delete`,
+  },
+  {
+    topic: "CUSTOMERS_DELETE",
+    callbackUrl: `${TUNNEL_BASE_URL}/api/webhooks/customers-delete`,
   },
   {
     topic: "INVENTORY_LEVELS_UPDATE",
