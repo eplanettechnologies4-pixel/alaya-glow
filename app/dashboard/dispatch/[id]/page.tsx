@@ -3,18 +3,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import PrintButton from "@/components/dispatch/PrintButton";
-import ReceiptStatusToggle from "@/components/dispatch/ReceiptStatusToggle";
+import ChallanPaymentDropdown from "@/components/dispatch/ChallanPaymentDropdown";
 import {
   ArrowLeft,
   CheckCircle2,
   History,
-  Sparkles,
-  Calendar,
-  User,
-  FileText,
-  CreditCard,
-  Clock,
-  PackageCheck,
 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -54,9 +47,11 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
         shopify_variant_id,
         title,
         sku,
+        price,
         products (
           id,
-          title
+          title,
+          price_min
         )
       )
     `
@@ -67,13 +62,16 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
     console.error("Error fetching dispatch items:", itemsErr);
   }
 
-  const dispatchDate = new Date(dispatch.created_at).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  // Format date like: 24-Sep-26
+  const formatChallanDate = (dateStr: string) => {
+    const d = new Date(dateStr);
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = d.toLocaleString("en-US", { month: "short" });
+    const year = String(d.getFullYear()).slice(-2);
+    return `${day}-${month}-${year}`;
+  };
+
+  const challanDate = formatChallanDate(dispatch.created_at);
 
   // Parse optional pricing, discount, and paymentStatus metadata from notes
   let displayNotes = dispatch.notes || "";
@@ -110,7 +108,66 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
     });
   }
 
-  const hasPricing = Boolean(pricingData && (pricingData.subtotal !== undefined || pricingData.totalAmount !== undefined));
+  // Calculate totals and pack sizes
+  const processedItems = (items || []).map((row: any, idx: number) => {
+    const variant = row.product_variants;
+    const product = variant?.products;
+    const productTitle = product?.title || "Product";
+    
+    // Extract pack size (e.g. "100ml" or variant title)
+    let packSize = "100ml";
+    if (variant?.title && variant.title !== "Default Title") {
+      packSize = variant.title;
+    } else {
+      const sizeMatch = productTitle.match(/\b(\d+\s*(?:ml|g|gm|kg|pcs|oz))\b/i);
+      if (sizeMatch) {
+        packSize = sizeMatch[1];
+      }
+    }
+
+    const fallbackPrice =
+      typeof variant?.price === "number" && variant.price > 0
+        ? variant.price
+        : typeof product?.price_min === "number" && product.price_min > 0
+        ? product.price_min
+        : 0;
+
+    const pricingItem = pricingMap.get(row.variant_id);
+    const unitPrice = pricingItem?.unitPrice ?? fallbackPrice;
+    const lineTotal = pricingItem?.totalPrice ?? unitPrice * row.quantity;
+
+    return {
+      sr: idx + 1,
+      id: row.id,
+      description: productTitle,
+      packSize,
+      quantity: row.quantity,
+      unitPrice,
+      lineTotal,
+    };
+  });
+
+  const totalCalculatedUnits = processedItems.reduce((acc, item) => acc + item.quantity, 0);
+  const subtotalAmount =
+    pricingData?.subtotal ?? processedItems.reduce((acc, item) => acc + item.lineTotal, 0);
+  const discountAmount = pricingData?.discount?.amount ?? 0;
+  const netTotalAmount = pricingData?.totalAmount ?? Math.max(0, subtotalAmount - discountAmount);
+
+  // Parse party address, phone, and DC / Order numbers
+  let dcNo = dispatch.id.slice(0, 4).toUpperCase();
+  let orderNo = dispatch.id.slice(0, 4).toUpperCase();
+  let partyAddress = "Kidmat Markaz Faisalabad";
+  let partyPhone = "0317-0685093";
+
+  if (displayNotes) {
+    const cleanNotes = displayNotes.trim();
+    if (/^\d+$/.test(cleanNotes)) {
+      dcNo = cleanNotes.padStart(4, "0");
+      orderNo = cleanNotes.padStart(4, "0");
+    } else {
+      partyAddress = cleanNotes;
+    }
+  }
 
   return (
     <>
@@ -130,7 +187,7 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
                 -webkit-print-color-adjust: exact !important;
                 print-color-adjust: exact !important;
               }
-              .receipt-page {
+              .challan-page {
                 page-break-after: avoid !important;
                 page-break-before: avoid !important;
                 page-break-inside: avoid !important;
@@ -143,7 +200,7 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
 
       <div className="min-h-screen bg-[#090d16] text-slate-100 p-4 sm:p-8 font-sans print:p-0 print:m-0 print:min-h-0 print:bg-white print:text-black">
         {/* Top Navigation Bar - Hidden on Print */}
-        <div className="max-w-4xl mx-auto mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
+        <div className="max-w-3xl mx-auto mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
           <div className="flex items-center gap-3">
             <Link
               href="/dashboard/dispatch"
@@ -170,245 +227,221 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
           </div>
         </div>
 
-        {/* Main Printable Receipt Card - Strictly 1 Page */}
-        <div className="max-w-4xl mx-auto rounded-3xl border border-slate-800/80 bg-[#0c1220] shadow-2xl overflow-hidden print:border-none print:shadow-none print:bg-white print:m-0 print:p-6 print:max-w-none print:w-full print:rounded-none receipt-page print:max-h-[285mm] print:overflow-hidden">
-          <div className="p-6 sm:p-9 print:p-0 text-slate-100 print:text-slate-900 space-y-4 print:space-y-3.5">
+        {/* Main Printable Delivery Challan Card - Exactly matching the Reference Design */}
+        <div className="max-w-3xl mx-auto bg-white text-stone-900 shadow-2xl rounded-sm overflow-hidden print:border-none print:shadow-none print:bg-white print:m-0 print:max-w-none print:w-full print:rounded-none challan-page print:max-h-[285mm] print:overflow-hidden">
+          <div className="p-8 sm:p-12 print:p-8 text-stone-900 space-y-6">
             
-            {/* Header Block: Alaya Glow Emerald Branding & Status Badges */}
-            <div className="flex flex-col sm:flex-row justify-between items-start gap-4 pb-4 border-b border-slate-800 print:border-slate-300">
-              <div>
-                <div className="flex items-center gap-2 mb-1.5">
-                  <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center print:border-emerald-700 print:bg-emerald-50">
-                    <Sparkles className="w-3.5 h-3.5 text-emerald-400 print:text-emerald-700 stroke-[2.5]" />
-                  </div>
-                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-400 print:text-emerald-700">
-                    ALAYA GLOW ERP • DISTRIBUTION PORTAL
-                  </span>
-                </div>
-                <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white print:text-slate-900">
-                  Stock Dispatch Receipt
-                </h1>
-                <p className="text-[11px] text-slate-400 print:text-slate-600 mt-0.5">
-                  Official Delivery Voucher &amp; Inventory Deduction Confirmation
-                </p>
-              </div>
-
-              {/* Status and Reference ID */}
-              <div className="flex flex-col sm:items-end gap-1.5 shrink-0">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider border ${
-                      paymentStatus === "paid"
-                        ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 print:bg-emerald-50 print:text-emerald-800 print:border-emerald-300"
-                        : "bg-amber-500/15 text-amber-400 border-amber-500/30 print:bg-amber-50 print:text-amber-800 print:border-amber-300"
-                    }`}
-                  >
-                    {paymentStatus === "paid" ? (
-                      <>
-                        <CheckCircle2 className="w-3 h-3 stroke-[2.5]" />
-                        PAID IN FULL
-                      </>
-                    ) : (
-                      <>
-                        <Clock className="w-3 h-3 stroke-[2.5]" />
-                        PAYMENT PENDING
-                      </>
-                    )}
-                  </span>
-                  <span className="inline-block px-2.5 py-1 rounded-md bg-slate-800/80 border border-slate-700 text-slate-300 print:bg-slate-100 print:text-slate-800 print:border-slate-300 text-[11px] font-mono font-bold">
-                    SYNCED
-                  </span>
-                </div>
-                <p className="text-[11px] font-mono text-slate-400 print:text-slate-600">
-                  Ref: <span className="text-slate-200 print:text-slate-900 font-bold">{dispatch.id}</span>
-                </p>
-              </div>
-            </div>
-
-            {/* Interactive Payment Status Changer (On-screen only, hidden on print) */}
-            <ReceiptStatusToggle
-              dispatchId={dispatch.id}
-              initialStatus={paymentStatus}
-              paidAt={paidAt}
-            />
-
-            {/* Consignee & Details Ribbon (Compact 4-column bar) */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3.5 rounded-xl bg-slate-900/60 print:bg-slate-50 border border-slate-800 print:border-slate-200 text-xs">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 print:text-slate-500 mb-0.5 flex items-center gap-1">
-                  <User className="w-3 h-3 text-emerald-400 print:text-emerald-700" />
-                  Recipient / Consignee
-                </p>
-                <p className="text-sm font-bold text-white print:text-slate-900 truncate">
-                  {dispatch.recipient_name}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 print:text-slate-500 mb-0.5 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-emerald-400 print:text-emerald-700" />
-                  Dispatch Date
-                </p>
-                <p className="text-xs font-semibold text-slate-200 print:text-slate-800 font-mono">
-                  {dispatchDate}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 print:text-slate-500 mb-0.5 flex items-center gap-1">
-                  <CreditCard className="w-3 h-3 text-emerald-400 print:text-emerald-700" />
-                  Payment Status
-                </p>
-                <p
-                  className={`text-xs font-bold font-mono ${
-                    paymentStatus === "paid"
-                      ? "text-emerald-400 print:text-emerald-700"
-                      : "text-amber-400 print:text-amber-700"
-                  }`}
-                >
-                  {paymentStatus === "paid" ? "Paid In Full" : "Pending Payment"}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 print:text-slate-500 mb-0.5 flex items-center gap-1">
-                  <FileText className="w-3 h-3 text-emerald-400 print:text-emerald-700" />
-                  Notes / Reference
-                </p>
-                <p className="text-xs text-slate-300 print:text-slate-700 truncate" title={displayNotes || "None"}>
-                  {displayNotes || "—"}
-                </p>
-              </div>
-            </div>
-
-            {/* Dispatched Line Items Table */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <h2 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 print:text-slate-700 flex items-center gap-1.5">
-                  <PackageCheck className="w-3.5 h-3.5 text-emerald-400 print:text-emerald-700" />
-                  Dispatched Line Items ({items?.length || 0})
-                </h2>
-              </div>
-
-              <div className="border border-slate-800/90 print:border-slate-300 rounded-xl overflow-hidden shadow-sm">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-slate-900/90 print:bg-slate-100 border-b border-slate-800 print:border-slate-300 text-[10px] font-bold uppercase tracking-wider text-slate-400 print:text-slate-700">
-                      <th className="py-2 px-3 w-10 text-center">#</th>
-                      <th className="py-2 px-3">Item &amp; Description</th>
-                      <th className="py-2 px-3">SKU</th>
-                      {hasPricing && <th className="py-2 px-3 text-right">Unit Price</th>}
-                      <th className="py-2 px-3 text-right">Qty</th>
-                      {hasPricing && <th className="py-2 px-3 text-right">Total Price</th>}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 print:divide-slate-200 text-slate-200 print:text-slate-900">
-                    {(items || []).map((row: any, idx: number) => {
-                      const variant = row.product_variants;
-                      const productTitle = variant?.products?.title || "Product";
-                      const variantTitle =
-                        variant?.title && variant.title !== "Default Title" ? ` - ${variant.title}` : "";
-
-                      const pricingItem = pricingMap.get(row.variant_id);
-                      const unitPrice = pricingItem?.unitPrice ?? 0;
-                      const lineTotal = pricingItem?.totalPrice ?? unitPrice * row.quantity;
-
-                      return (
-                        <tr key={row.id} className="hover:bg-slate-800/20 print:hover:bg-transparent">
-                          <td className="py-2 px-3 text-center font-mono text-[11px] text-slate-400 print:text-slate-600">
-                            {idx + 1}
-                          </td>
-                          <td className="py-2 px-3 font-semibold text-white print:text-slate-900">
-                            <span>{productTitle}</span>
-                            {variantTitle && (
-                              <span className="text-[11px] text-slate-400 print:text-slate-600 block font-normal">
-                                {variantTitle}
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-2 px-3 font-mono text-[11px] text-slate-400 print:text-slate-600">
-                            {variant?.sku || "—"}
-                          </td>
-                          {hasPricing && (
-                            <td className="py-2 px-3 text-right font-mono text-xs text-slate-300 print:text-slate-800">
-                              Rs {unitPrice.toLocaleString()}
-                            </td>
-                          )}
-                          <td className="py-2 px-3 text-right font-mono font-bold text-white print:text-slate-900">
-                            {row.quantity}
-                          </td>
-                          {hasPricing && (
-                            <td className="py-2 px-3 text-right font-mono font-bold text-white print:text-slate-900">
-                              Rs {lineTotal.toLocaleString()}
-                            </td>
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    {/* Units Total Row */}
-                    <tr className="bg-slate-900/80 print:bg-slate-50 border-t-2 border-slate-800 print:border-slate-300 text-xs font-semibold">
-                      <td
-                        colSpan={hasPricing ? 4 : 3}
-                        className="py-2 px-3 text-right uppercase tracking-wider text-[11px] text-slate-400 print:text-slate-600"
-                      >
-                        Total Units Dispatched:
-                      </td>
-                      <td className="py-2 px-3 text-right font-mono text-sm font-bold text-emerald-400 print:text-slate-900">
-                        {dispatch.total_quantity}
-                      </td>
-                      {hasPricing && <td className="py-2 px-3" />}
-                    </tr>
-
-                    {/* Financial Totals Rows */}
-                    {hasPricing && (
-                      <>
-                        <tr className="bg-slate-900/50 print:bg-white text-xs text-slate-300 print:text-slate-700 border-t border-slate-800/60 print:border-slate-200">
-                          <td colSpan={5} className="py-1.5 px-3 text-right font-medium text-[11px]">
-                            Items Subtotal:
-                          </td>
-                          <td className="py-1.5 px-3 text-right font-mono font-semibold text-white print:text-slate-900">
-                            Rs {pricingData?.subtotal?.toLocaleString() ?? "0"}
-                          </td>
-                        </tr>
-
-                        {pricingData?.discount && pricingData.discount.amount > 0 && (
-                          <tr className="bg-slate-900/50 print:bg-white text-xs text-emerald-400 print:text-emerald-700 border-t border-slate-800/60 print:border-slate-200">
-                            <td colSpan={5} className="py-1.5 px-3 text-right font-medium text-[11px]">
-                              Discount ({pricingData.discount.type === "percentage" ? `${pricingData.discount.value}%` : "Fixed"}):
-                            </td>
-                            <td className="py-1.5 px-3 text-right font-mono font-semibold">
-                              - Rs {pricingData.discount.amount.toLocaleString()}
-                            </td>
-                          </tr>
-                        )}
-
-                        <tr className="bg-slate-900 print:bg-slate-100 border-t-2 border-slate-800 print:border-slate-400 text-xs">
-                          <td colSpan={5} className="py-2.5 px-3 text-right uppercase tracking-wider text-[11px] text-white print:text-slate-900 font-extrabold">
-                            Final Net Payable / Total:
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-mono text-base font-extrabold text-emerald-400 print:text-emerald-700">
-                            Rs {pricingData?.totalAmount?.toLocaleString() ?? "0"}
-                          </td>
-                        </tr>
-                      </>
-                    )}
-                  </tfoot>
-                </table>
-              </div>
-            </div>
-
-            {/* Micro ERP footer (1 single line, no signatures) */}
-            <div className="pt-2 text-center">
-              <p className="text-[10px] text-slate-500 print:text-slate-400 font-mono">
-                Electronic Record • Alaya Glow ERP System • Automatically synchronized with Shopify Store Inventory
+            {/* 1. Header: Alaya Glow & Delivery Challan */}
+            <div className="text-center space-y-1">
+              <h1 className="text-3xl sm:text-4xl font-bold font-serif text-stone-900 tracking-tight">
+                Alaya Glow
+              </h1>
+              <p className="text-xs text-stone-600">
+                G3 The Business Center Regency Road Faisalabad
               </p>
+              <p className="text-xs text-stone-600">
+                www.alayaglow.com.pk
+              </p>
+              <div className="pt-2">
+                <span className="text-xs font-bold uppercase tracking-[0.25em] text-stone-900 border-b-2 border-stone-800 pb-0.5 inline-block font-sans">
+                  DELIVERY CHALLAN
+                </span>
+              </div>
             </div>
+
+            {/* 2. Party Name & Order Info Grid */}
+            <div className="border border-stone-300 text-xs">
+              <div className="grid grid-cols-12 divide-x divide-stone-300 border-b border-stone-300">
+                {/* Left: Party Name */}
+                <div className="col-span-3 sm:col-span-2 py-2 px-3 font-semibold text-[11px] uppercase tracking-wider text-stone-700 bg-stone-50/50">
+                  PARTY NAME
+                </div>
+                <div className="col-span-9 sm:col-span-5 py-2 px-3 font-medium text-stone-900">
+                  {dispatch.recipient_name}
+                </div>
+                {/* Right: D.C No. */}
+                <div className="col-span-4 sm:col-span-2 py-2 px-3 font-semibold text-[11px] uppercase tracking-wider text-stone-700 bg-stone-50/50">
+                  D.C NO.
+                </div>
+                <div className="col-span-8 sm:col-span-3 py-2 px-3 font-medium text-stone-900">
+                  {dcNo}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-12 divide-x divide-stone-300 border-b border-stone-300">
+                {/* Left: Address */}
+                <div className="col-span-3 sm:col-span-2 py-2 px-3 font-semibold text-[11px] uppercase tracking-wider text-stone-700 bg-stone-50/50">
+                  ADDRESS
+                </div>
+                <div className="col-span-9 sm:col-span-5 py-2 px-3 text-stone-800">
+                  {partyAddress}
+                </div>
+                {/* Right: Order No. */}
+                <div className="col-span-4 sm:col-span-2 py-2 px-3 font-semibold text-[11px] uppercase tracking-wider text-stone-700 bg-stone-50/50">
+                  ORDER NO.
+                </div>
+                <div className="col-span-8 sm:col-span-3 py-2 px-3 font-medium text-stone-900">
+                  {orderNo}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-12 divide-x divide-stone-300 border-b border-stone-300">
+                {/* Left: Phone No. */}
+                <div className="col-span-3 sm:col-span-2 py-2 px-3 font-semibold text-[11px] uppercase tracking-wider text-stone-700 bg-stone-50/50">
+                  PHONE NO.
+                </div>
+                <div className="col-span-9 sm:col-span-5 py-2 px-3 text-stone-800">
+                  {partyPhone}
+                </div>
+                {/* Right: Date */}
+                <div className="col-span-4 sm:col-span-2 py-2 px-3 font-semibold text-[11px] uppercase tracking-wider text-stone-700 bg-stone-50/50">
+                  DATE
+                </div>
+                <div className="col-span-8 sm:col-span-3 py-2 px-3 font-medium text-stone-900">
+                  {challanDate}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-12 divide-x divide-stone-300">
+                {/* Left: Empty Cell */}
+                <div className="col-span-12 sm:col-span-7 py-2 px-3 text-stone-400 text-[11px]">
+                  {/* Spacer or extra notes */}
+                </div>
+                {/* Right: Payment Status */}
+                <div className="col-span-4 sm:col-span-2 py-2 px-3 font-semibold text-[11px] uppercase tracking-wider text-stone-700 bg-stone-50/50">
+                  PAYMENT
+                </div>
+                <div className="col-span-8 sm:col-span-3 py-1.5 px-3">
+                  <ChallanPaymentDropdown
+                    dispatchId={dispatch.id}
+                    initialStatus={paymentStatus}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* 3. Goods Table */}
+            <div className="border border-stone-300 overflow-hidden">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-stone-300 text-[10px] font-bold uppercase tracking-wider text-stone-700 bg-stone-50/50 divide-x divide-stone-300">
+                    <th className="py-2.5 px-2 w-12 text-center">SR#</th>
+                    <th className="py-2.5 px-3">DESCRIPTION OF GOODS</th>
+                    <th className="py-2.5 px-3 w-24 text-center">PACK SIZE</th>
+                    <th className="py-2.5 px-3 w-20 text-center">QUANTITY</th>
+                    <th className="py-2.5 px-3 w-24 text-center">UNIT PRICE</th>
+                    <th className="py-2.5 px-3 w-24 text-center">TOTAL</th>
+                    <th className="w-6 py-2.5 px-1 border-l border-stone-300 print:hidden" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-stone-300 text-stone-800">
+                  {processedItems.map((item) => (
+                    <tr key={item.id} className="divide-x divide-stone-300">
+                      <td className="py-2 px-2 text-center text-stone-600">
+                        {item.sr}
+                      </td>
+                      <td className="py-2 px-3 font-normal text-stone-900">
+                        {item.description}
+                      </td>
+                      <td className="py-2 px-3 text-center text-stone-700">
+                        {item.packSize}
+                      </td>
+                      <td className="py-2 px-3 text-center text-stone-900">
+                        {item.quantity}
+                      </td>
+                      <td className="py-2 px-3 text-center text-stone-900">
+                        {item.unitPrice.toLocaleString()}
+                      </td>
+                      <td className="py-2 px-3 text-center font-bold text-stone-900">
+                        {item.lineTotal.toLocaleString()}
+                      </td>
+                      <td className="w-6 py-2 px-1 border-l border-stone-300 print:hidden" />
+                    </tr>
+                  ))}
+
+                  {/* Summary Row */}
+                  <tr className="border-t border-stone-300 divide-x divide-stone-300 font-bold text-stone-900 bg-stone-50/30">
+                    <td className="py-2 px-2" />
+                    <td className="py-2 px-3 text-right uppercase tracking-wider text-[11px] text-stone-800">
+                      TOTAL
+                    </td>
+                    <td className="py-2 px-3" />
+                    <td className="py-2 px-3 text-center font-bold text-stone-900">
+                      {totalCalculatedUnits}
+                    </td>
+                    <td className="py-2 px-3 text-center font-bold text-stone-800 uppercase text-[10px] tracking-wider">
+                      TUBES
+                    </td>
+                    <td className="py-2 px-3 text-center font-bold text-stone-900">
+                      {subtotalAmount.toLocaleString()}
+                    </td>
+                    <td className="w-6 py-2 px-1 border-l border-stone-300 print:hidden" />
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* 4. Subtotal & Calculation Box (Aligned to the Right) */}
+            <div className="flex justify-end pt-1">
+              <div className="w-72 border border-stone-300 divide-y divide-stone-300 text-xs">
+                <div className="flex justify-between py-1.5 px-3">
+                  <span className="text-stone-700 font-normal">Subtotal</span>
+                  <span className="text-stone-900 font-medium">{subtotalAmount.toLocaleString()}</span>
+                </div>
+
+                {pricingData?.discount && pricingData.discount.amount > 0 ? (
+                  <>
+                    <div className="flex justify-between py-1.5 px-3">
+                      <span className="text-stone-700 font-normal">Discount</span>
+                      <span className="text-stone-900 font-medium">
+                        {pricingData.discount.type === "percentage" ? `${pricingData.discount.value} %` : "Fixed"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between py-1.5 px-3">
+                      <span className="text-stone-700 font-normal">Discount amount</span>
+                      <span className="text-stone-900 font-medium">{discountAmount.toLocaleString()}</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex justify-between py-1.5 px-3">
+                      <span className="text-stone-700 font-normal">Discount</span>
+                      <span className="text-stone-900 font-medium">0 %</span>
+                    </div>
+                    <div className="flex justify-between py-1.5 px-3">
+                      <span className="text-stone-700 font-normal">Discount amount</span>
+                      <span className="text-stone-900 font-medium">0</span>
+                    </div>
+                  </>
+                )}
+
+                <div className="flex justify-between py-2 px-3 font-bold text-stone-900 text-sm bg-stone-50/50">
+                  <span>Net total</span>
+                  <span>{netTotalAmount.toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 5. Signature Lines (Manager and Verify by) */}
+            <div className="pt-14 sm:pt-20 grid grid-cols-2 gap-8 text-xs text-stone-800">
+              <div className="space-y-1">
+                <div className="border-b border-stone-800 w-48 sm:w-60 mb-2" />
+                <p className="font-bold text-stone-900">Manager</p>
+                <p className="text-[11px] text-stone-600">Date: {challanDate}</p>
+              </div>
+
+              <div className="space-y-1">
+                <div className="border-b border-stone-800 w-48 sm:w-60 mb-2" />
+                <p className="font-bold text-stone-900">Verify by</p>
+                <p className="text-[11px] text-stone-600">Date: {challanDate}</p>
+              </div>
+            </div>
+
           </div>
         </div>
       </div>
     </>
   );
 }
+
 
