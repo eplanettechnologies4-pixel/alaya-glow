@@ -79,7 +79,7 @@ export default function Sidebar({ counts }: SidebarProps) {
   ];
 
   return (
-    <aside className="w-64 border-r border-slate-800/80 bg-[#0c1220]/90 backdrop-blur-md flex flex-col justify-between shrink-0 h-full select-none">
+    <aside className="w-64 border-r border-slate-800/80 bg-[#0c1220]/90 backdrop-blur-md flex flex-col justify-between shrink-0 h-full select-none print:hidden">
       <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
         {/* Brand Header */}
         <div className="h-16 flex items-center px-6 border-b border-slate-800/80 gap-3 shrink-0">

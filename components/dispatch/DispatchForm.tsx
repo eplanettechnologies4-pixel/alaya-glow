@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -14,6 +14,16 @@ import {
   CheckCircle2,
   FileText,
   History,
+  Check,
+  Search,
+  ChevronDown,
+  X,
+  Minus,
+  Boxes,
+  Tag,
+  Percent,
+  Coins,
+  RotateCcw,
 } from "lucide-react";
 
 export interface DispatchableItem {
@@ -22,6 +32,7 @@ export interface DispatchableItem {
   variantTitle: string;
   sku: string | null;
   stock: number;
+  price: number;
   imageUrl: string | null;
 }
 
@@ -33,22 +44,70 @@ interface LineItemState {
   id: string; // internal unique key for form row
   variantId: string;
   quantity: number;
+  price: number; // custom unit price for this manual dispatch
 }
+
+const generateId = () => {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return "id-" + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+};
 
 export default function DispatchForm({ availableItems }: DispatchFormProps) {
   const router = useRouter();
 
   const [recipientName, setRecipientName] = useState("");
   const [notes, setNotes] = useState("");
-  const [items, setItems] = useState<LineItemState[]>([
-    {
-      id: crypto.randomUUID(),
-      variantId: availableItems[0]?.variantId || "",
-      quantity: 1,
-    },
-  ]);
+  const [items, setItems] = useState<LineItemState[]>(() => {
+    if (availableItems.length > 0) {
+      return [
+        {
+          id: generateId(),
+          variantId: availableItems[0].variantId,
+          quantity: 1,
+          price: availableItems[0].price || 0,
+        },
+      ];
+    }
+    return [];
+  });
+
+  // Discount states
+  const [discountType, setDiscountType] = useState<"percentage" | "fixed">("percentage");
+  const [discountValue, setDiscountValue] = useState<number | "">("");
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Multi-select dropdown state
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [batchQty, setBatchQty] = useState<string>("");
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsDropdownOpen(false);
+      }
+    }
+
+    if (isDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener("keydown", handleKeyDown);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isDropdownOpen]);
 
   // Map for fast lookup
   const itemsMap = useMemo(() => {
@@ -57,7 +116,24 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
     return map;
   }, [availableItems]);
 
-  // Running totals
+  // Set of selected variant IDs
+  const selectedVariantIds = useMemo(() => {
+    return new Set(items.map((it) => it.variantId));
+  }, [items]);
+
+  // Filtered available items based on search query
+  const filteredAvailableItems = useMemo(() => {
+    if (!searchQuery.trim()) return availableItems;
+    const q = searchQuery.toLowerCase().trim();
+    return availableItems.filter((item) => {
+      const matchProduct = item.productTitle.toLowerCase().includes(q);
+      const matchVariant = item.variantTitle.toLowerCase().includes(q);
+      const matchSku = item.sku ? item.sku.toLowerCase().includes(q) : false;
+      return matchProduct || matchVariant || matchSku;
+    });
+  }, [availableItems, searchQuery]);
+
+  // Running quantity totals
   const totalQuantity = useMemo(() => {
     return items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
   }, [items]);
@@ -67,39 +143,157 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
     return new Set(validIds).size;
   }, [items]);
 
-  const handleAddItem = () => {
-    // Pick first variant that isn't selected yet if possible
-    const selectedVariantIds = new Set(items.map((i) => i.variantId));
-    const nextAvailable = availableItems.find((i) => !selectedVariantIds.has(i.variantId));
+  // Financial calculations
+  const subtotal = useMemo(() => {
+    return items.reduce((sum, it) => {
+      const qty = Number(it.quantity) || 0;
+      const unitPrice = Number(it.price) || 0;
+      return sum + qty * unitPrice;
+    }, 0);
+  }, [items]);
 
-    setItems((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        variantId: nextAvailable ? nextAvailable.variantId : availableItems[0]?.variantId || "",
-        quantity: 1,
-      },
-    ]);
+  const discountAmount = useMemo(() => {
+    const val = Number(discountValue) || 0;
+    if (val <= 0 || subtotal <= 0) return 0;
+    if (discountType === "percentage") {
+      const cappedPercent = Math.min(100, Math.max(0, val));
+      return Math.round((subtotal * cappedPercent) / 100);
+    } else {
+      return Math.min(subtotal, Math.max(0, val));
+    }
+  }, [discountType, discountValue, subtotal]);
+
+  const totalAmount = useMemo(() => {
+    return Math.max(0, subtotal - discountAmount);
+  }, [subtotal, discountAmount]);
+
+  // Check if any line item exceeds stock
+  const hasExceededStock = useMemo(() => {
+    return items.some((item) => {
+      const stockInfo = itemsMap.get(item.variantId);
+      const maxStock = stockInfo ? stockInfo.stock : 0;
+      return item.quantity > maxStock;
+    });
+  }, [items, itemsMap]);
+
+  // Toggle variant selection (add if not present, remove if present)
+  const toggleVariantSelection = (variantId: string) => {
+    setItems((prev) => {
+      const existing = prev.some((it) => it.variantId === variantId);
+      if (existing) {
+        return prev.filter((it) => it.variantId !== variantId);
+      } else {
+        const prod = itemsMap.get(variantId);
+        return [
+          ...prev,
+          {
+            id: generateId(),
+            variantId,
+            quantity: 1,
+            price: prod?.price || 0,
+          },
+        ];
+      }
+    });
   };
 
+  // Select all items currently filtered in the search list
+  const handleSelectAllFiltered = () => {
+    setItems((prev) => {
+      const currentVariantMap = new Map(prev.map((it) => [it.variantId, it]));
+      const updated = [...prev];
+      for (const prod of filteredAvailableItems) {
+        if (!currentVariantMap.has(prod.variantId)) {
+          updated.push({
+            id: generateId(),
+            variantId: prod.variantId,
+            quantity: 1,
+            price: prod.price || 0,
+          });
+        }
+      }
+      return updated;
+    });
+  };
+
+  // Deselect all items
+  const handleDeselectAll = () => {
+    setItems([]);
+  };
+
+  // Remove single line item
   const handleRemoveItem = (id: string) => {
-    if (items.length <= 1) return;
     setItems((prev) => prev.filter((it) => it.id !== id));
   };
 
-  const handleUpdateItem = (id: string, field: "variantId" | "quantity", value: any) => {
+  // Update line item quantity
+  const handleUpdateQuantity = (id: string, value: any) => {
     setItems((prev) =>
       prev.map((it) => {
         if (it.id !== id) return it;
-        if (field === "quantity") {
-          const qty = parseInt(value, 10);
-          return { ...it, quantity: isNaN(qty) ? 0 : Math.max(0, qty) };
-        }
-        return { ...it, [field]: value };
+        const qty = parseInt(value, 10);
+        return { ...it, quantity: isNaN(qty) ? 0 : Math.max(0, qty) };
       })
     );
   };
 
+  // Update line item custom unit price
+  const handleUpdatePrice = (id: string, value: any) => {
+    setItems((prev) =>
+      prev.map((it) => {
+        if (it.id !== id) return it;
+        const price = parseFloat(value);
+        return { ...it, price: isNaN(price) ? 0 : Math.max(0, price) };
+      })
+    );
+  };
+
+  // Reset price to default variant price
+  const handleResetPrice = (id: string, variantId: string) => {
+    const defaultPrice = itemsMap.get(variantId)?.price || 0;
+    setItems((prev) =>
+      prev.map((it) => {
+        if (it.id !== id) return it;
+        return { ...it, price: defaultPrice };
+      })
+    );
+  };
+
+  // Adjust quantity by delta (+1 or -1)
+  const handleAdjustQuantity = (id: string, delta: number) => {
+    setItems((prev) =>
+      prev.map((it) => {
+        if (it.id !== id) return it;
+        const stockInfo = itemsMap.get(it.variantId);
+        const maxStock = stockInfo ? stockInfo.stock : 99999;
+        const newQty = Math.max(1, Math.min(maxStock, (it.quantity || 0) + delta));
+        return { ...it, quantity: newQty };
+      })
+    );
+  };
+
+  // Set quantity to maximum available stock
+  const handleSetMaxStock = (id: string, variantId: string) => {
+    const stockInfo = itemsMap.get(variantId);
+    if (!stockInfo) return;
+    handleUpdateQuantity(id, stockInfo.stock);
+  };
+
+  // Apply batch quantity to all selected items
+  const handleApplyBatchQty = (e: React.FormEvent) => {
+    e.preventDefault();
+    const qty = parseInt(batchQty, 10);
+    if (isNaN(qty) || qty <= 0) return;
+    setItems((prev) =>
+      prev.map((it) => ({
+        ...it,
+        quantity: qty,
+      }))
+    );
+    setBatchQty("");
+  };
+
+  // Submit dispatch
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
@@ -110,7 +304,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
     }
 
     if (items.length === 0) {
-      setErrorMessage("Please add at least one line item.");
+      setErrorMessage("Please select at least one product to dispatch.");
       return;
     }
 
@@ -139,9 +333,18 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
       const payload = {
         recipientName: recipientName.trim(),
         notes: notes.trim() || undefined,
+        discount: {
+          type: discountType,
+          value: Number(discountValue) || 0,
+          amount: discountAmount,
+        },
+        subtotal,
+        totalAmount,
         items: items.map((it) => ({
           variantId: it.variantId,
           quantity: it.quantity,
+          unitPrice: it.price,
+          totalPrice: it.quantity * it.price,
         })),
       };
 
@@ -247,123 +450,660 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
         </div>
       </div>
 
-      {/* Line Items Section */}
+      {/* Line Items Section with Multi-Select Product Dropdown */}
       <div className="rounded-2xl border border-slate-800/80 bg-[#0c1220]/70 backdrop-blur-sm p-6 shadow-xl space-y-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-            <Layers className="w-4 h-4 text-emerald-400" />
-            2. Items To Dispatch
-          </h2>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+              <Layers className="w-4 h-4 text-emerald-400" />
+              2. Items To Dispatch &amp; Editable Pricing
+            </h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Select products to dispatch. Default prices appear automatically, and you can change the unit price for this shipment.
+            </p>
+          </div>
 
-          <button
-            type="button"
-            onClick={handleAddItem}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-xs font-medium text-emerald-400 hover:text-emerald-300 transition-all"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add Another Item
-          </button>
+          <div className="flex items-center gap-2">
+            <span className="text-xs px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono font-medium">
+              {items.length} {items.length === 1 ? "product" : "products"} selected
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsDropdownOpen((prev) => !prev)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-xs font-medium text-emerald-400 hover:text-emerald-300 transition-all"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              {isDropdownOpen ? "Close Selector" : "Select Products"}
+            </button>
+          </div>
         </div>
 
-        <div className="space-y-3">
-          {items.map((lineItem, index) => {
-            const currentStockInfo = itemsMap.get(lineItem.variantId);
-            const maxStock = currentStockInfo ? currentStockInfo.stock : 0;
-            const isExceeded = lineItem.quantity > maxStock;
+        {/* MULTI-SELECT DROPDOWN CONTAINER */}
+        <div ref={dropdownRef} className="relative">
+          <label className="block text-xs font-medium text-slate-300 mb-1.5 flex items-center justify-between">
+            <span className="flex items-center gap-2">
+              Select Products / Variants
+              <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                Multi-Select Enabled
+              </span>
+            </span>
+            <span className="text-[11px] text-slate-400">
+              Click to open options list &amp; check multiple items
+            </span>
+          </label>
 
-            return (
-              <div
-                key={lineItem.id}
-                className={`p-4 rounded-xl border transition-all ${
-                  isExceeded
-                    ? "border-rose-500/50 bg-rose-500/5"
-                    : "border-slate-800 bg-slate-900/50 hover:border-slate-700/80"
-                } flex flex-col md:flex-row items-start md:items-center gap-4`}
-              >
-                <div className="flex items-center gap-3 shrink-0 text-xs font-mono text-slate-500">
-                  <span className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-slate-300 font-semibold">
-                    {index + 1}
+          {/* Trigger button mimicking the select field */}
+          <button
+            type="button"
+            onClick={() => setIsDropdownOpen((prev) => !prev)}
+            className={`w-full px-4 py-3 rounded-xl bg-slate-900 border text-left flex items-center justify-between transition-all group ${
+              isDropdownOpen
+                ? "border-emerald-500 ring-2 ring-emerald-500/30"
+                : "border-slate-700/80 hover:border-slate-600"
+            }`}
+          >
+            <div className="flex items-center gap-3 min-w-0 flex-1 mr-3">
+              <Boxes className="w-4 h-4 text-emerald-400 shrink-0" />
+              {items.length === 0 ? (
+                <span className="text-slate-400 text-sm">
+                  Click here to select one or multiple products to dispatch...
+                </span>
+              ) : (
+                <div className="flex items-center gap-2 flex-wrap min-w-0">
+                  <span className="text-white text-sm font-medium">
+                    {items.length} {items.length === 1 ? "product" : "products"} selected:
                   </span>
-                </div>
-
-                {/* Product/Variant Select */}
-                <div className="flex-1 w-full">
-                  <label className="block text-[11px] font-medium text-slate-400 mb-1">
-                    Select Product / Variant
-                  </label>
-                  <select
-                    value={lineItem.variantId}
-                    onChange={(e) => handleUpdateItem(lineItem.id, "variantId", e.target.value)}
-                    className="w-full px-3.5 py-2 rounded-lg bg-slate-900 border border-slate-700/80 text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all font-sans"
-                  >
-                    {availableItems.map((prod) => (
-                      <option key={prod.variantId} value={prod.variantId}>
-                        {prod.productTitle}
-                        {prod.variantTitle && prod.variantTitle !== "Default Title"
-                          ? ` - ${prod.variantTitle}`
-                          : ""}
-                        {prod.sku ? ` (${prod.sku})` : ""} — Stock: {prod.stock}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Available Stock Indicator */}
-                <div className="w-full md:w-32 shrink-0">
-                  <span className="block text-[11px] font-medium text-slate-400 mb-1">
-                    Current Stock
-                  </span>
-                  <div
-                    className={`px-3 py-2 rounded-lg text-xs font-semibold font-mono border ${
-                      maxStock > 0
-                        ? "bg-slate-800/80 text-emerald-400 border-slate-700/60"
-                        : "bg-rose-500/10 text-rose-400 border-rose-500/30"
-                    }`}
-                  >
-                    {maxStock} available
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {items.slice(0, 3).map((it) => {
+                      const productInfo = itemsMap.get(it.variantId);
+                      if (!productInfo) return null;
+                      return (
+                        <span
+                          key={it.id}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs truncate max-w-[200px]"
+                        >
+                          {productInfo.productTitle}
+                        </span>
+                      );
+                    })}
+                    {items.length > 3 && (
+                      <span className="text-xs text-slate-400 font-mono">
+                        +{items.length - 3} more
+                      </span>
+                    )}
                   </div>
                 </div>
+              )}
+            </div>
 
-                {/* Dispatch Quantity Input */}
-                <div className="w-full md:w-36 shrink-0">
-                  <label className="block text-[11px] font-medium text-slate-400 mb-1">
-                    Dispatch Qty
-                  </label>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs font-mono font-medium text-slate-400 group-hover:text-slate-300">
+                {items.length}/{availableItems.length}
+              </span>
+              <ChevronDown
+                className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${
+                  isDropdownOpen ? "rotate-180 text-emerald-400" : ""
+                }`}
+              />
+            </div>
+          </button>
+
+          {/* DROPDOWN POPOVER */}
+          {isDropdownOpen && (
+            <div className="absolute top-full left-0 right-0 mt-2 z-40 rounded-2xl border border-slate-700 bg-[#0c1220] shadow-2xl overflow-hidden backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-150">
+              {/* Search Bar & Quick Actions Header */}
+              <div className="p-3 border-b border-slate-800 bg-slate-900/80 space-y-2">
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
-                    type="number"
-                    min="1"
-                    max={maxStock}
-                    value={lineItem.quantity || ""}
-                    onChange={(e) => handleUpdateItem(lineItem.id, "quantity", e.target.value)}
-                    className={`w-full px-3 py-2 rounded-lg bg-slate-900 border text-sm font-mono focus:outline-none transition-all ${
-                      isExceeded
-                        ? "border-rose-500 text-rose-300 focus:ring-2 focus:ring-rose-500/40"
-                        : "border-slate-700/80 text-white focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500"
-                    }`}
+                    type="text"
+                    placeholder="Search by product name or SKU..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    autoFocus
+                    className="w-full pl-9 pr-8 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white placeholder-slate-500 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all"
                   />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
 
-                {/* Remove Button */}
-                <div className="self-end md:self-center shrink-0 pt-1 md:pt-5">
-                  <button
-                    type="button"
-                    disabled={items.length <= 1}
-                    onClick={() => handleRemoveItem(lineItem.id)}
-                    className="p-2 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400"
-                    title="Remove item"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                <div className="flex items-center justify-between text-xs pt-1 px-1">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSelectAllFiltered}
+                      className="text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
+                    >
+                      Select All ({filteredAvailableItems.length})
+                    </button>
+                    <span className="text-slate-600">|</span>
+                    <button
+                      type="button"
+                      onClick={handleDeselectAll}
+                      className="text-slate-400 hover:text-rose-400 font-medium transition-colors"
+                    >
+                      Clear Selection
+                    </button>
+                  </div>
+                  <span className="text-slate-400 font-mono text-[11px]">
+                    Showing {filteredAvailableItems.length} products
+                  </span>
                 </div>
               </div>
-            );
-          })}
+
+              {/* Scrollable Products List with Checkboxes */}
+              <div className="max-h-80 overflow-y-auto divide-y divide-slate-800/60 p-2">
+                {filteredAvailableItems.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-slate-400">
+                    No products matched your search "{searchQuery}"
+                  </div>
+                ) : (
+                  filteredAvailableItems.map((prod) => {
+                    const isSelected = selectedVariantIds.has(prod.variantId);
+                    const isOutOfStock = prod.stock <= 0;
+
+                    return (
+                      <div
+                        key={prod.variantId}
+                        onClick={() => toggleVariantSelection(prod.variantId)}
+                        className={`flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all ${
+                          isSelected
+                            ? "bg-emerald-500/10 border border-emerald-500/30 text-white"
+                            : "hover:bg-slate-800/60 border border-transparent text-slate-300"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1 mr-4">
+                          {/* Checkbox */}
+                          <div
+                            className={`w-5 h-5 rounded-lg border flex items-center justify-center shrink-0 transition-colors ${
+                              isSelected
+                                ? "bg-emerald-500 border-emerald-500 text-slate-950 font-bold"
+                                : "border-slate-600 bg-slate-900 group-hover:border-slate-500"
+                            }`}
+                          >
+                            {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                          </div>
+
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-white truncate">
+                              {prod.productTitle}
+                            </p>
+                            <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
+                              {prod.variantTitle && prod.variantTitle !== "Default Title" && (
+                                <span>{prod.variantTitle}</span>
+                              )}
+                              {prod.sku && (
+                                <span className="font-mono text-[11px] bg-slate-800/80 px-1.5 py-0.5 rounded text-slate-400">
+                                  SKU: {prod.sku}
+                                </span>
+                              )}
+                              <span className="font-mono text-emerald-400/90 text-xs">
+                                • Price: Rs {prod.price.toLocaleString()}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Stock Badge */}
+                        <div className="shrink-0 text-right">
+                          <span
+                            className={`px-2.5 py-1 rounded-md text-xs font-mono font-semibold ${
+                              isOutOfStock
+                                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                                : "bg-slate-800 text-emerald-400 border border-slate-700/80"
+                            }`}
+                          >
+                            {prod.stock} available
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Popover Footer */}
+              <div className="p-3 border-t border-slate-800 bg-slate-900/90 flex items-center justify-between">
+                <span className="text-xs text-slate-400">
+                  {items.length} {items.length === 1 ? "product" : "products"} selected
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsDropdownOpen(false)}
+                  className="px-4 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-xs transition-all shadow-sm"
+                >
+                  Done Selecting
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* BATCH QUANTITY HELPER TOOLBAR (When multiple items selected) */}
+        {items.length > 1 && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-slate-900/40 border border-slate-800">
+            <span className="text-xs text-slate-400 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              Quick Batch Tool: Set same quantity for all selected products
+            </span>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min="1"
+                placeholder="Qty (e.g. 5)"
+                value={batchQty}
+                onChange={(e) => setBatchQty(e.target.value)}
+                className="w-24 px-2.5 py-1 text-xs rounded-lg bg-slate-900 border border-slate-700 text-white font-mono focus:outline-none focus:border-emerald-500"
+              />
+              <button
+                type="button"
+                onClick={handleApplyBatchQty}
+                className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-emerald-400 border border-slate-700 transition-colors"
+              >
+                Apply to All
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* SELECTED LINE ITEMS LIST */}
+        {items.length === 0 ? (
+          <div className="p-12 text-center rounded-2xl border border-dashed border-slate-800 bg-slate-900/20 space-y-3">
+            <div className="w-12 h-12 rounded-2xl bg-slate-800/80 border border-slate-700 text-slate-400 flex items-center justify-center mx-auto">
+              <Package className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-white">No products selected yet</p>
+              <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                Click the dropdown above or click 'Select Products' to choose products for this shipment.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsDropdownOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-xs transition-all shadow-md"
+            >
+              <Plus className="w-4 h-4 stroke-[2.5]" />
+              Select Products Now
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {items.map((lineItem, index) => {
+              const currentStockInfo = itemsMap.get(lineItem.variantId);
+              const maxStock = currentStockInfo ? currentStockInfo.stock : 0;
+              const defaultPrice = currentStockInfo?.price || 0;
+              const isExceeded = lineItem.quantity > maxStock;
+              const productTitle = currentStockInfo?.productTitle || "Selected Product";
+              const variantTitle = currentStockInfo?.variantTitle;
+              const sku = currentStockInfo?.sku;
+              const isPriceCustomized = lineItem.price !== defaultPrice;
+              const lineTotal = (lineItem.quantity || 0) * (lineItem.price || 0);
+
+              return (
+                <div
+                  key={lineItem.id}
+                  className={`p-4 rounded-xl border transition-all ${
+                    isExceeded
+                      ? "border-rose-500/50 bg-rose-500/5"
+                      : "border-slate-800 bg-slate-900/50 hover:border-slate-700/80"
+                  } flex flex-col lg:flex-row items-start lg:items-center gap-4`}
+                >
+                  {/* Row Index */}
+                  <div className="flex items-center gap-3 shrink-0 text-xs font-mono text-slate-500">
+                    <span className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-slate-300 font-semibold">
+                      {index + 1}
+                    </span>
+                  </div>
+
+                  {/* Product Details Display */}
+                  <div className="flex-1 min-w-0 w-full">
+                    <p className="text-sm font-semibold text-white truncate">
+                      {productTitle}
+                    </p>
+                    <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5 flex-wrap">
+                      {variantTitle && variantTitle !== "Default Title" && (
+                        <span>{variantTitle}</span>
+                      )}
+                      {sku && (
+                        <span className="font-mono text-[11px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">
+                          SKU: {sku}
+                        </span>
+                      )}
+                      <span className="font-mono text-slate-400 text-xs">
+                        Default Price: Rs {defaultPrice.toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Available Stock Indicator */}
+                  <div className="w-full sm:w-28 shrink-0">
+                    <span className="block text-[11px] font-medium text-slate-400 mb-1">
+                      Current Stock
+                    </span>
+                    <div
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold font-mono border text-center ${
+                        maxStock > 0
+                          ? "bg-slate-800/80 text-emerald-400 border-slate-700/60"
+                          : "bg-rose-500/10 text-rose-400 border-rose-500/30"
+                      }`}
+                    >
+                      {maxStock} available
+                    </div>
+                  </div>
+
+                  {/* CHANGEABLE UNIT PRICE INPUT */}
+                  <div className="w-full sm:w-36 shrink-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[11px] font-medium text-slate-300">
+                        Unit Price (Rs)
+                      </label>
+                      {isPriceCustomized && (
+                        <button
+                          type="button"
+                          onClick={() => handleResetPrice(lineItem.id, lineItem.variantId)}
+                          className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-0.5"
+                          title="Reset to default catalog price"
+                        >
+                          <RotateCcw className="w-2.5 h-2.5" />
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-500 font-mono">
+                        Rs
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={lineItem.price === 0 ? "0" : lineItem.price || ""}
+                        onChange={(e) => handleUpdatePrice(lineItem.id, e.target.value)}
+                        className={`w-full pl-8 pr-2.5 py-1.5 rounded-lg bg-slate-900 border text-sm font-mono text-right focus:outline-none transition-all ${
+                          isPriceCustomized
+                            ? "border-amber-500/80 text-amber-300 focus:ring-1 focus:ring-amber-500/50"
+                            : "border-slate-700/80 text-white focus:ring-1 focus:ring-emerald-500/50"
+                        }`}
+                      />
+                    </div>
+                    {isPriceCustomized && (
+                      <span className="text-[10px] text-amber-400/90 font-mono mt-0.5 block text-right">
+                        Customized price
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Dispatch Quantity Input with Stepper Controls */}
+                  <div className="w-full sm:w-44 shrink-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[11px] font-medium text-slate-400">
+                        Dispatch Qty
+                      </label>
+                      {maxStock > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => handleSetMaxStock(lineItem.id, lineItem.variantId)}
+                          className="text-[10px] text-emerald-400 hover:text-emerald-300 font-mono underline"
+                        >
+                          Max ({maxStock})
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleAdjustQuantity(lineItem.id, -1)}
+                        disabled={lineItem.quantity <= 1}
+                        className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 border border-slate-700 text-slate-300 flex items-center justify-center transition-colors shrink-0"
+                      >
+                        <Minus className="w-3.5 h-3.5" />
+                      </button>
+
+                      <input
+                        type="number"
+                        min="1"
+                        max={maxStock}
+                        value={lineItem.quantity || ""}
+                        onChange={(e) => handleUpdateQuantity(lineItem.id, e.target.value)}
+                        className={`w-full px-2 py-1.5 rounded-lg bg-slate-900 border text-sm font-mono text-center focus:outline-none transition-all ${
+                          isExceeded
+                            ? "border-rose-500 text-rose-300 focus:ring-2 focus:ring-rose-500/40"
+                            : "border-slate-700/80 text-white focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500"
+                        }`}
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => handleAdjustQuantity(lineItem.id, 1)}
+                        disabled={lineItem.quantity >= maxStock}
+                        className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 border border-slate-700 text-slate-300 flex items-center justify-center transition-colors shrink-0"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {isExceeded && (
+                      <p className="text-[11px] text-rose-400 mt-1">
+                        Exceeds stock (max {maxStock})
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Line Total */}
+                  <div className="w-full sm:w-32 shrink-0 text-right">
+                    <span className="block text-[11px] font-medium text-slate-400 mb-1">
+                      Line Total
+                    </span>
+                    <p className="text-sm font-mono font-bold text-white pt-1">
+                      Rs {lineTotal.toLocaleString()}
+                    </p>
+                  </div>
+
+                  {/* Remove Button */}
+                  <div className="self-end lg:self-center shrink-0 pt-1 lg:pt-4">
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveItem(lineItem.id)}
+                      className="p-2 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                      title="Remove product from dispatch"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 3. DISCOUNT & PRICING BREAKDOWN SECTION */}
+      <div className="rounded-2xl border border-slate-800/80 bg-[#0c1220]/70 backdrop-blur-sm p-6 shadow-xl space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+              <Tag className="w-4 h-4 text-emerald-400" />
+              3. Discount &amp; Pricing Breakdown
+            </h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Apply a special discount for this shipment (percentage or fixed amount).
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+          {/* Discount Controls */}
+          <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-4">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                <Percent className="w-3.5 h-3.5 text-emerald-400" />
+                Apply Shipment Discount
+              </label>
+
+              {/* Discount Type Toggle */}
+              <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setDiscountType("percentage")}
+                  className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+                    discountType === "percentage"
+                      ? "bg-emerald-500 text-slate-950 shadow-sm"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  Percentage (%)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDiscountType("fixed")}
+                  className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+                    discountType === "fixed"
+                      ? "bg-emerald-500 text-slate-950 shadow-sm"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  Fixed Amount (Rs)
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <div className="relative">
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder={
+                    discountType === "percentage"
+                      ? "e.g. 10 for 10% off"
+                      : "e.g. 1500 for Rs 1,500 off"
+                  }
+                  value={discountValue}
+                  onChange={(e) => {
+                    const val = e.target.value === "" ? "" : parseFloat(e.target.value);
+                    setDiscountValue(isNaN(val as number) ? "" : (val as number));
+                  }}
+                  className="w-full pl-4 pr-16 py-2.5 rounded-xl bg-slate-950 border border-slate-700/80 text-white placeholder-slate-500 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-emerald-400">
+                  {discountType === "percentage" ? "%" : "PKR / Rs"}
+                </span>
+              </div>
+
+              {/* Quick Presets */}
+              <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
+                <span className="text-[11px] text-slate-500 mr-1">Quick Presets:</span>
+                {discountType === "percentage" ? (
+                  <>
+                    {[5, 10, 15, 20, 25].map((pct) => (
+                      <button
+                        key={pct}
+                        type="button"
+                        onClick={() => setDiscountValue(pct)}
+                        className={`px-2 py-0.5 rounded text-xs font-mono border transition-all ${
+                          discountValue === pct
+                            ? "bg-emerald-500/20 border-emerald-500 text-emerald-300"
+                            : "bg-slate-800/80 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-800"
+                        }`}
+                      >
+                        {pct}%
+                      </button>
+                    ))}
+                    {discountValue !== "" && (
+                      <button
+                        type="button"
+                        onClick={() => setDiscountValue("")}
+                        className="px-2 py-0.5 rounded text-xs font-mono text-rose-400 hover:underline ml-1"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {[500, 1000, 2000, 5000].map((amt) => (
+                      <button
+                        key={amt}
+                        type="button"
+                        onClick={() => setDiscountValue(amt)}
+                        className={`px-2 py-0.5 rounded text-xs font-mono border transition-all ${
+                          discountValue === amt
+                            ? "bg-emerald-500/20 border-emerald-500 text-emerald-300"
+                            : "bg-slate-800/80 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-800"
+                        }`}
+                      >
+                        Rs {amt.toLocaleString()}
+                      </button>
+                    ))}
+                    {discountValue !== "" && (
+                      <button
+                        type="button"
+                        onClick={() => setDiscountValue("")}
+                        className="px-2 py-0.5 rounded text-xs font-mono text-rose-400 hover:underline ml-1"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Real-time Financial Breakdown Summary Box */}
+          <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3">
+            <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+              Shipment Valuation
+            </h3>
+
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center justify-between text-slate-300">
+                <span>Items Subtotal:</span>
+                <span className="font-mono font-semibold text-white">
+                  Rs {subtotal.toLocaleString()}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between text-slate-300">
+                <span className="flex items-center gap-1.5">
+                  <span>Shipment Discount:</span>
+                  {discountAmount > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
+                      {discountType === "percentage" ? `${discountValue}% OFF` : "FLAT OFF"}
+                    </span>
+                  )}
+                </span>
+                <span
+                  className={`font-mono font-semibold ${
+                    discountAmount > 0 ? "text-emerald-400" : "text-slate-500"
+                  }`}
+                >
+                  - Rs {discountAmount.toLocaleString()}
+                </span>
+              </div>
+
+              <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
+                <span className="text-base font-bold text-white">Net Total Value:</span>
+                <span className="text-xl font-bold font-mono text-emerald-400">
+                  Rs {totalAmount.toLocaleString()}
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
       {/* Summary & Submit Footer */}
       <div className="rounded-2xl border border-slate-800/80 bg-[#0c1220]/90 backdrop-blur-md p-6 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6">
-        <div className="flex items-center gap-6 w-full md:w-auto">
+        <div className="flex items-center gap-6 w-full md:w-auto flex-wrap">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center text-emerald-400">
               <Package className="w-5 h-5" />
@@ -378,7 +1118,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
             </div>
           </div>
 
-          <div className="h-8 w-px bg-slate-800" />
+          <div className="h-8 w-px bg-slate-800 hidden sm:block" />
 
           <div>
             <p className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
@@ -386,6 +1126,17 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
             </p>
             <p className="text-sm font-bold text-slate-300 font-mono">
               {uniqueItemCount} <span className="text-xs font-normal text-slate-500">SKUs</span>
+            </p>
+          </div>
+
+          <div className="h-8 w-px bg-slate-800 hidden sm:block" />
+
+          <div>
+            <p className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
+              Net Shipment Value
+            </p>
+            <p className="text-lg font-bold text-emerald-400 font-mono">
+              Rs {totalAmount.toLocaleString()}
             </p>
           </div>
         </div>
@@ -400,7 +1151,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
 
           <button
             type="submit"
-            disabled={isSubmitting || totalQuantity <= 0}
+            disabled={isSubmitting || items.length === 0 || totalQuantity <= 0 || hasExceededStock}
             className="px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-sm transition-all shadow-lg shadow-emerald-500/25 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {isSubmitting ? (

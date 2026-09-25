@@ -18,10 +18,12 @@ export default async function DispatchPage() {
         shopify_variant_id,
         title,
         sku,
+        price,
         products (
           id,
           title,
-          image_url
+          image_url,
+          price_min
         )
       )
     `
@@ -38,12 +40,20 @@ export default async function DispatchPage() {
       const product = variant?.products;
       if (!variant || !row.variant_id) return null;
 
+      const unitPrice =
+        typeof variant.price === "number" && variant.price > 0
+          ? variant.price
+          : typeof product?.price_min === "number" && product.price_min > 0
+          ? product.price_min
+          : 0;
+
       return {
         variantId: row.variant_id,
         productTitle: product?.title || "Unknown Product",
         variantTitle: variant.title || "Default Title",
         sku: variant.sku || null,
         stock: typeof row.quantity === "number" ? row.quantity : 0,
+        price: unitPrice,
         imageUrl: product?.image_url || null,
       };
     })

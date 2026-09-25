@@ -62,6 +62,7 @@ export default async function DispatchHistoryPage() {
                   <th className="py-3 px-6">Date &amp; Time</th>
                   <th className="py-3 px-6">Recipient</th>
                   <th className="py-3 px-6">Total Units</th>
+                  <th className="py-3 px-6">Total Value</th>
                   <th className="py-3 px-6">Remarks / Notes</th>
                   <th className="py-3 px-6 text-right">Receipt</th>
                 </tr>
@@ -76,6 +77,27 @@ export default async function DispatchHistoryPage() {
                     minute: "2-digit",
                   });
 
+                  let displayRemarks = item.notes || "—";
+                  let totalAmountVal: number | null = null;
+                  let hasDiscount = false;
+
+                  if (item.notes && item.notes.trim().startsWith("{")) {
+                    try {
+                      const parsed = JSON.parse(item.notes);
+                      if (parsed && typeof parsed === "object") {
+                        displayRemarks = parsed.text || "—";
+                        if (typeof parsed.pricing?.totalAmount === "number") {
+                          totalAmountVal = parsed.pricing.totalAmount;
+                        }
+                        if (parsed.pricing?.discount?.amount > 0) {
+                          hasDiscount = true;
+                        }
+                      }
+                    } catch {
+                      // Fallback
+                    }
+                  }
+
                   return (
                     <tr
                       key={item.id}
@@ -87,11 +109,25 @@ export default async function DispatchHistoryPage() {
                       <td className="py-3.5 px-6 font-semibold text-white">
                         {item.recipient_name}
                       </td>
-                      <td className="py-3.5 px-6 font-mono font-bold text-emerald-400">
+                      <td className="py-3.5 px-6 font-mono font-bold text-slate-200">
                         {item.total_quantity}
                       </td>
+                      <td className="py-3.5 px-6 font-mono font-bold text-emerald-400 text-xs">
+                        {totalAmountVal !== null ? (
+                          <div className="flex items-center gap-1.5">
+                            <span>Rs {totalAmountVal.toLocaleString()}</span>
+                            {hasDiscount && (
+                              <span className="text-[10px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-sans">
+                                Discounted
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-slate-500 font-normal">—</span>
+                        )}
+                      </td>
                       <td className="py-3.5 px-6 text-xs text-slate-400 max-w-xs truncate">
-                        {item.notes || "—"}
+                        {displayRemarks}
                       </td>
                       <td className="py-3.5 px-6 text-right">
                         <Link

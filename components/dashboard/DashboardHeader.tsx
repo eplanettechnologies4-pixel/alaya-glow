@@ -25,7 +25,7 @@ export default function DashboardHeader() {
   };
 
   return (
-    <header className="h-16 border-b border-slate-800/80 bg-[#0c1220]/60 backdrop-blur-md px-6 md:px-8 flex items-center justify-between shrink-0">
+    <header className="h-16 border-b border-slate-800/80 bg-[#0c1220]/60 backdrop-blur-md px-6 md:px-8 flex items-center justify-between shrink-0 print:hidden">
       <div className="flex items-center gap-3">
         <div className="flex items-center text-sm text-slate-400">
           <LayoutDashboard className="w-4 h-4 mr-2 text-slate-400" />
