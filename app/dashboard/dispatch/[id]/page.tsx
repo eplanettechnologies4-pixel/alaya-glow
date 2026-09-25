@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import PrintButton from "@/components/dispatch/PrintButton";
 import ChallanPaymentDropdown from "@/components/dispatch/ChallanPaymentDropdown";
+import DeleteDispatchButton from "@/components/dispatch/DeleteDispatchButton";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -223,6 +224,12 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
               <CheckCircle2 className="w-4 h-4" />
               Shopify Synced
             </div>
+            <DeleteDispatchButton
+              dispatchId={dispatch.id}
+              recipientName={dispatch.recipient_name}
+              redirectOnDelete="/dashboard/dispatch/history"
+              variant="header"
+            />
             <PrintButton />
           </div>
         </div>

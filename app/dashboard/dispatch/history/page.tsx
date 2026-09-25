@@ -1,6 +1,7 @@
 import React from "react";
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase/server";
+import DeleteDispatchButton from "@/components/dispatch/DeleteDispatchButton";
 import { Plus, History, FileText, ArrowUpRight, Truck } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -65,7 +66,7 @@ export default async function DispatchHistoryPage() {
                   <th className="py-3 px-6">Payment Status</th>
                   <th className="py-3 px-6">Total Value</th>
                   <th className="py-3 px-6">Remarks / Notes</th>
-                  <th className="py-3 px-6 text-right">Receipt</th>
+                  <th className="py-3 px-6 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 text-slate-200">
@@ -149,14 +150,20 @@ export default async function DispatchHistoryPage() {
                         {displayRemarks}
                       </td>
                       <td className="py-3.5 px-6 text-right">
-                        <Link
-                          href={`/dashboard/dispatch/${item.id}`}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 hover:text-white transition-colors"
-                        >
-                          <FileText className="w-3.5 h-3.5 text-emerald-400" />
-                          View Receipt
-                          <ArrowUpRight className="w-3 h-3 text-slate-400" />
-                        </Link>
+                        <div className="flex items-center justify-end gap-2">
+                          <Link
+                            href={`/dashboard/dispatch/${item.id}`}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 hover:text-white transition-colors"
+                          >
+                            <FileText className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>View</span>
+                            <ArrowUpRight className="w-3 h-3 text-slate-400" />
+                          </Link>
+                          <DeleteDispatchButton
+                            dispatchId={item.id}
+                            recipientName={item.recipient_name}
+                          />
+                        </div>
                       </td>
                     </tr>
                   );

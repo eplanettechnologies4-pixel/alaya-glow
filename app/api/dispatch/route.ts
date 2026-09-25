@@ -314,3 +314,220 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export async function DELETE(request: NextRequest) {
+  try {
+    let dispatchId: string | null = null;
+    let restoreInventory: boolean = true;
+
+    // Check query parameter ?id=...
+    const { searchParams } = new URL(request.url);
+    if (searchParams.get("id")) {
+      dispatchId = searchParams.get("id");
+    }
+    if (searchParams.get("restoreInventory") !== null) {
+      restoreInventory = searchParams.get("restoreInventory") === "true";
+    }
+
+    // Check JSON body if available
+    try {
+      const body = await request.json();
+      if (body?.dispatchId) dispatchId = body.dispatchId;
+      if (typeof body?.restoreInventory === "boolean") restoreInventory = body.restoreInventory;
+    } catch {
+      // Body may not be passed or already parsed
+    }
+
+    if (!dispatchId || typeof dispatchId !== "string") {
+      return NextResponse.json(
+        { success: false, error: "Dispatch ID is required" },
+        { status: 400 }
+      );
+    }
+
+    // 1. Fetch dispatch record to verify it exists
+    const { data: dispatch, error: fetchErr } = await supabaseAdmin
+      .from("manual_dispatches")
+      .select("id, recipient_name, total_quantity")
+      .eq("id", dispatchId)
+      .maybeSingle();
+
+    if (fetchErr || !dispatch) {
+      return NextResponse.json(
+        { success: false, error: "Dispatch record not found in database" },
+        { status: 404 }
+      );
+    }
+
+    // 2. Fetch dispatch items
+    const { data: dispatchItems, error: itemsFetchErr } = await supabaseAdmin
+      .from("manual_dispatch_items")
+      .select(
+        `
+        id,
+        variant_id,
+        quantity,
+        product_variants (
+          id,
+          shopify_variant_id,
+          title
+        )
+      `
+      )
+      .eq("dispatch_id", dispatchId);
+
+    if (itemsFetchErr) {
+      console.error("Error fetching dispatch items for deletion:", itemsFetchErr);
+    }
+
+    // 3. If restoreInventory is true, add the quantities back to inventory and Shopify
+    if (restoreInventory && Array.isArray(dispatchItems) && dispatchItems.length > 0) {
+      for (const item of dispatchItems) {
+        if (!item.variant_id || !item.quantity) continue;
+
+        // a. Fetch current inventory row in Supabase
+        const { data: invRow } = await supabaseAdmin
+          .from("inventory")
+          .select("id, quantity")
+          .eq("variant_id", item.variant_id)
+          .maybeSingle();
+
+        if (invRow) {
+          const restoredQty = invRow.quantity + item.quantity;
+          await supabaseAdmin
+            .from("inventory")
+            .update({
+              quantity: restoredQty,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", invRow.id);
+
+          // b. Sync restored quantity to Shopify if variant has shopify_variant_id
+          const shopifyVariantId = (item.product_variants as any)?.shopify_variant_id;
+          if (shopifyVariantId) {
+            try {
+              const shopifyVariantGid = `gid://shopify/ProductVariant/${shopifyVariantId}`;
+              const variantQuery = `
+                query GetVariantInventory($id: ID!) {
+                  productVariant(id: $id) {
+                    id
+                    inventoryItem {
+                      id
+                      inventoryLevels(first: 1) {
+                        edges {
+                          node {
+                            location {
+                              id
+                            }
+                            quantities(names: ["available"]) {
+                              name
+                              quantity
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `;
+
+              const variantRes = await queryShopifyAdmin(variantQuery, { id: shopifyVariantGid });
+              const variantData = variantRes.data?.productVariant;
+
+              if (variantData?.inventoryItem) {
+                const inventoryItemId = variantData.inventoryItem.id;
+                const invLevels = variantData.inventoryItem.inventoryLevels?.edges || [];
+
+                if (invLevels.length > 0 && invLevels[0].node?.location?.id) {
+                  const locationId = invLevels[0].node.location.id;
+                  const currentQuantities = invLevels[0].node.quantities || [];
+                  const availableObj = currentQuantities.find((q: any) => q.name === "available");
+                  const currentShopifyQty =
+                    typeof availableObj?.quantity === "number" ? availableObj.quantity : invRow.quantity;
+
+                  const idempotencyKey = crypto.randomUUID();
+                  const setInvMutation = `
+                    mutation SetInventory($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
+                      inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+                        inventoryAdjustmentGroup {
+                          id
+                        }
+                        userErrors {
+                          field
+                          message
+                        }
+                      }
+                    }
+                  `;
+
+                  await queryShopifyAdmin(setInvMutation, {
+                    idempotencyKey,
+                    input: {
+                      name: "available",
+                      reason: "correction",
+                      quantities: [
+                        {
+                          inventoryItemId,
+                          locationId,
+                          quantity: currentShopifyQty + item.quantity,
+                          changeFromQuantity: currentShopifyQty,
+                        },
+                      ],
+                    },
+                  });
+                }
+              }
+            } catch (shopifyErr) {
+              console.warn(
+                `Could not sync restored inventory to Shopify for variant ${shopifyVariantId}:`,
+                shopifyErr
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // 4. Delete related items from manual_dispatch_items table
+    const { error: itemsDeleteErr } = await supabaseAdmin
+      .from("manual_dispatch_items")
+      .delete()
+      .eq("dispatch_id", dispatchId);
+
+    if (itemsDeleteErr) {
+      console.error("Error deleting dispatch items:", itemsDeleteErr);
+      return NextResponse.json(
+        { success: false, error: "Failed to delete dispatch items from database" },
+        { status: 500 }
+      );
+    }
+
+    // 5. Delete parent record from manual_dispatches table
+    const { error: dispatchDeleteErr } = await supabaseAdmin
+      .from("manual_dispatches")
+      .delete()
+      .eq("id", dispatchId);
+
+    if (dispatchDeleteErr) {
+      console.error("Error deleting dispatch record:", dispatchDeleteErr);
+      return NextResponse.json(
+        { success: false, error: "Failed to delete dispatch record from database" },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: "Dispatch record completely removed from database",
+      deletedId: dispatchId,
+      restoredInventory: restoreInventory,
+    });
+  } catch (error: any) {
+    console.error("Error deleting dispatch:", error);
+    return NextResponse.json(
+      { success: false, error: error.message || "Internal server error deleting dispatch" },
+      { status: 500 }
+    );
+  }
+}
+
