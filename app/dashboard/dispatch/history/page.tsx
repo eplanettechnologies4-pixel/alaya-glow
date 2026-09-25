@@ -62,6 +62,7 @@ export default async function DispatchHistoryPage() {
                   <th className="py-3 px-6">Date &amp; Time</th>
                   <th className="py-3 px-6">Recipient</th>
                   <th className="py-3 px-6">Total Units</th>
+                  <th className="py-3 px-6">Payment Status</th>
                   <th className="py-3 px-6">Total Value</th>
                   <th className="py-3 px-6">Remarks / Notes</th>
                   <th className="py-3 px-6 text-right">Receipt</th>
@@ -80,12 +81,14 @@ export default async function DispatchHistoryPage() {
                   let displayRemarks = item.notes || "—";
                   let totalAmountVal: number | null = null;
                   let hasDiscount = false;
+                  let paymentStatus: "paid" | "unpaid" = "unpaid";
 
                   if (item.notes && item.notes.trim().startsWith("{")) {
                     try {
                       const parsed = JSON.parse(item.notes);
                       if (parsed && typeof parsed === "object") {
                         displayRemarks = parsed.text || "—";
+                        paymentStatus = parsed.paymentStatus === "paid" ? "paid" : "unpaid";
                         if (typeof parsed.pricing?.totalAmount === "number") {
                           totalAmountVal = parsed.pricing.totalAmount;
                         }
@@ -111,6 +114,22 @@ export default async function DispatchHistoryPage() {
                       </td>
                       <td className="py-3.5 px-6 font-mono font-bold text-slate-200">
                         {item.total_quantity}
+                      </td>
+                      <td className="py-3.5 px-6">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold font-mono border ${
+                            paymentStatus === "paid"
+                              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                              : "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                          }`}
+                        >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              paymentStatus === "paid" ? "bg-emerald-400" : "bg-amber-400"
+                            }`}
+                          />
+                          {paymentStatus === "paid" ? "Paid" : "Unpaid"}
+                        </span>
                       </td>
                       <td className="py-3.5 px-6 font-mono font-bold text-emerald-400 text-xs">
                         {totalAmountVal !== null ? (

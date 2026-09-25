@@ -15,6 +15,7 @@ interface DispatchItemInput {
 interface DispatchRequestBody {
   recipientName: string;
   notes?: string;
+  paymentStatus?: "paid" | "unpaid";
   discount?: {
     type: "percentage" | "fixed";
     value: number;
@@ -28,7 +29,7 @@ interface DispatchRequestBody {
 export async function POST(request: NextRequest) {
   try {
     const body: DispatchRequestBody = await request.json();
-    const { recipientName, notes, discount, subtotal, totalAmount, items } = body;
+    const { recipientName, notes, paymentStatus, discount, subtotal, totalAmount, items } = body;
 
     // 1. Validation
     if (!recipientName || typeof recipientName !== "string" || !recipientName.trim()) {
@@ -147,29 +148,29 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // 2. Format notes and pricing metadata
+    // 2. Format notes, payment status, and pricing metadata
     const rawNotes = notes?.trim() || "";
-    let notesToSave: string | null = rawNotes || null;
+    const effectivePaymentStatus: "paid" | "unpaid" = paymentStatus === "paid" ? "paid" : "unpaid";
+    const calculatedSubtotal =
+      typeof subtotal === "number" ? subtotal : validatedItems.reduce((acc, it) => acc + it.totalPrice, 0);
+    const calculatedTotalAmount = typeof totalAmount === "number" ? totalAmount : calculatedSubtotal;
 
-    if (discount || typeof subtotal === "number") {
-      notesToSave = JSON.stringify({
-        text: rawNotes,
-        pricing: {
-          subtotal: typeof subtotal === "number" ? subtotal : validatedItems.reduce((acc, it) => acc + it.totalPrice, 0),
-          discount: discount || { type: "fixed", value: 0, amount: 0 },
-          totalAmount:
-            typeof totalAmount === "number"
-              ? totalAmount
-              : validatedItems.reduce((acc, it) => acc + it.totalPrice, 0),
-          items: validatedItems.map((it) => ({
-            variantId: it.variantId,
-            quantity: it.quantity,
-            unitPrice: it.unitPrice,
-            totalPrice: it.totalPrice,
-          })),
-        },
-      });
-    }
+    const notesToSave = JSON.stringify({
+      text: rawNotes,
+      paymentStatus: effectivePaymentStatus,
+      paidAt: effectivePaymentStatus === "paid" ? new Date().toISOString() : null,
+      pricing: {
+        subtotal: calculatedSubtotal,
+        discount: discount || { type: "fixed", value: 0, amount: 0 },
+        totalAmount: calculatedTotalAmount,
+        items: validatedItems.map((it) => ({
+          variantId: it.variantId,
+          quantity: it.quantity,
+          unitPrice: it.unitPrice,
+          totalPrice: it.totalPrice,
+        })),
+      },
+    });
 
     // 3. Insert row into manual_dispatches
     const totalQuantity = validatedItems.reduce((acc, it) => acc + it.quantity, 0);

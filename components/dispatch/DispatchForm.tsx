@@ -24,6 +24,10 @@ import {
   Percent,
   Coins,
   RotateCcw,
+  Clock,
+  CreditCard,
+  User,
+  Hash,
 } from "lucide-react";
 
 export interface DispatchableItem {
@@ -57,8 +61,12 @@ const generateId = () => {
 export default function DispatchForm({ availableItems }: DispatchFormProps) {
   const router = useRouter();
 
+  // Step 1: Consignee & Payment Details
   const [recipientName, setRecipientName] = useState("");
   const [notes, setNotes] = useState("");
+  const [paymentStatus, setPaymentStatus] = useState<"unpaid" | "paid">("unpaid");
+
+  // Step 2 & 3: Items & Pricing
   const [items, setItems] = useState<LineItemState[]>(() => {
     if (availableItems.length > 0) {
       return [
@@ -73,7 +81,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
     return [];
   });
 
-  // Discount states
+  // Step 4: Discount & Valuation
   const [discountType, setDiscountType] = useState<"percentage" | "fixed">("percentage");
   const [discountValue, setDiscountValue] = useState<number | "">("");
 
@@ -299,7 +307,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
     setErrorMessage(null);
 
     if (!recipientName.trim()) {
-      setErrorMessage("Please enter a recipient name.");
+      setErrorMessage("Please enter a recipient or consignee name.");
       return;
     }
 
@@ -333,6 +341,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
       const payload = {
         recipientName: recipientName.trim(),
         notes: notes.trim() || undefined,
+        paymentStatus,
         discount: {
           type: discountType,
           value: Number(discountValue) || 0,
@@ -360,7 +369,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
         throw new Error(data.error || "Failed to create dispatch");
       }
 
-      // Redirect directly to receipt
+      // Redirect directly to the generated receipt
       router.push(`/dashboard/dispatch/${data.dispatchId}`);
     } catch (err: any) {
       console.error("Submission error:", err);
@@ -370,9 +379,9 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-8 max-w-5xl mx-auto">
-      {/* Top Banner / Breadcrumb */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <form onSubmit={handleSubmit} className="space-y-8 max-w-5xl mx-auto pb-16">
+      {/* Top Banner & Navigation */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
         <div>
           <div className="flex items-center gap-2 text-xs font-medium text-slate-400 mb-1">
             <Link
@@ -380,31 +389,33 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
               className="hover:text-emerald-400 transition-colors flex items-center gap-1"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              Back to Inventory
+              Inventory
             </Link>
             <span>/</span>
-            <span className="text-slate-200">Manual Stock Dispatch</span>
+            <span className="text-slate-200">Stock Dispatch</span>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
-            <Truck className="w-6 h-6 text-emerald-400 stroke-[2.2]" />
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 shadow-lg shadow-emerald-500/20">
+              <Truck className="w-5 h-5 stroke-[2.3]" />
+            </div>
             Manual Stock Dispatch
           </h1>
-          <p className="text-xs text-slate-400 mt-1">
-            Deduct offline distributor and wholesale shipments from Supabase and sync updated quantities to Shopify.
+          <p className="text-xs sm:text-sm text-slate-400 mt-1">
+            Deduct offline distributor and wholesale shipments from Supabase warehouse inventory and push updates to Shopify.
           </p>
         </div>
 
         <Link
           href="/dashboard/dispatch/history"
-          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs font-medium text-slate-300 hover:text-white hover:border-slate-700 transition-all shadow-sm"
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-semibold text-slate-300 hover:text-white hover:border-slate-700 transition-all shadow-sm shrink-0"
         >
-          <History className="w-3.5 h-3.5 text-slate-400" />
+          <History className="w-4 h-4 text-emerald-400" />
           Dispatch History
         </Link>
       </div>
 
       {errorMessage && (
-        <div className="p-4 rounded-xl border border-rose-500/40 bg-rose-500/10 text-rose-300 text-sm flex items-start gap-3">
+        <div className="p-4 rounded-xl border border-rose-500/40 bg-rose-500/10 text-rose-300 text-sm flex items-start gap-3 shadow-lg">
           <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
           <div>
             <p className="font-semibold">Unable to process dispatch</p>
@@ -413,67 +424,150 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
         </div>
       )}
 
-      {/* Recipient & Notes Section */}
-      <div className="rounded-2xl border border-slate-800/80 bg-[#0c1220]/70 backdrop-blur-sm p-6 shadow-xl space-y-6">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-          <FileText className="w-4 h-4 text-emerald-400" />
-          1. Shipment &amp; Recipient Details
-        </h2>
+      {/* ========================================================================= */}
+      {/* STEP 01: CONSIGNEE & SHIPMENT DETAILS */}
+      {/* ========================================================================= */}
+      <div className="rounded-2xl border border-slate-800/80 bg-[#0c1220]/80 backdrop-blur-sm p-6 shadow-xl space-y-6" >
+        <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
+          <div className="flex items-center gap-3">
+            <span className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-xs font-bold flex items-center justify-center">
+              01
+            </span>
+            <div>
+              <h2 className="text-base font-bold text-white tracking-tight">
+                Consignee &amp; Payment Terms
+              </h2>
+              <p className="text-xs text-slate-400">
+                Specify recipient info and the initial payment state for this receipt.
+              </p>
+            </div>
+          </div>
+
+          {/* Payment Status Pill */}
+          <div className="flex items-center gap-2">
+            <span
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${paymentStatus === "paid"
+                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                : "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                }`}
+            >
+              {paymentStatus === "paid" ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Paid In Full
+                </>
+              ) : (
+                <>
+                  <Clock className="w-3.5 h-3.5" /> Unpaid / Pending
+                </>
+              )}
+            </span>
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Recipient Name */}
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1.5">
-              Recipient Name <span className="text-emerald-400">*</span>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
+              <User className="w-3.5 h-3.5 text-emerald-400" />
+              Recipient / Consignee Name <span className="text-emerald-400">*</span>
             </label>
             <input
               type="text"
               required
-              placeholder="e.g. Lahore Central Distributor / Wholesale Partner"
+              placeholder="e.g. Lahore Central Distributor / Irfan Sb (Waqar Praanda)"
               value={recipientName}
               onChange={(e) => setRecipientName(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl bg-slate-900/80 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all"
+              className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all font-medium"
             />
           </div>
 
+          {/* Initial Payment Status Selector */}
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1.5">
-              Notes / Reference (Optional)
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <CreditCard className="w-3.5 h-3.5 text-emerald-400" />
+                Initial Payment Status
+              </span>
+              <span className="text-[11px] text-slate-400">Default is Unpaid</span>
+            </label>
+
+            <div className="grid grid-cols-2 gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
+              <button
+                type="button"
+                onClick={() => setPaymentStatus("unpaid")}
+                className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${paymentStatus === "unpaid"
+                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm"
+                  : "text-slate-400 hover:text-white"
+                  }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                Unpaid / Pending
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPaymentStatus("paid")}
+                className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${paymentStatus === "paid"
+                  ? "bg-emerald-500 text-slate-950 shadow-sm"
+                  : "text-slate-400 hover:text-white"
+                  }`}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Paid In Full
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-1">
+              You can easily change status from Unpaid to Paid on the receipt page anytime when payment arrives.
+            </p>
+          </div>
+
+          {/* Shipment Notes */}
+          <div className="md:col-span-2">
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
+              <FileText className="w-3.5 h-3.5 text-emerald-400" />
+              Shipment Remarks &amp; Reference Notes (Optional)
             </label>
             <textarea
               rows={2}
-              placeholder="e.g. Invoice #2041, dispatch via cargo, batch delivery"
+              placeholder="e.g. Invoice #1008, dispatch via Cargo, delivery receipt confirmation"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl bg-slate-900/80 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all resize-none"
+              className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all resize-none"
             />
           </div>
         </div>
       </div>
 
-      {/* Line Items Section with Multi-Select Product Dropdown */}
-      <div className="rounded-2xl border border-slate-800/80 bg-[#0c1220]/70 backdrop-blur-sm p-6 shadow-xl space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-              <Layers className="w-4 h-4 text-emerald-400" />
-              2. Items To Dispatch &amp; Editable Pricing
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Select products to dispatch. Default prices appear automatically, and you can change the unit price for this shipment.
-            </p>
+      {/* ========================================================================= */}
+      {/* STEP 02: SELECT PRODUCTS TO DISPATCH */}
+      {/* ========================================================================= */}
+      <div className="rounded-2xl border border-slate-800/80 bg-[#0c1220]/80 backdrop-blur-sm p-6 shadow-xl space-y-6" style={{ position: "relative", zIndex: 999999 }}>
+        <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
+          <div className="flex items-center gap-3">
+            <span className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-xs font-bold flex items-center justify-center">
+              02
+            </span>
+            <div>
+              <h2 className="text-base font-bold text-white tracking-tight">
+                Product Catalog Selection
+              </h2>
+              <p className="text-xs text-slate-400">
+                Check one or multiple products to include in this dispatch shipment.
+              </p>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
             <span className="text-xs px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono font-medium">
-              {items.length} {items.length === 1 ? "product" : "products"} selected
+              {items.length} of {availableItems.length} selected
             </span>
             <button
               type="button"
               onClick={() => setIsDropdownOpen((prev) => !prev)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-xs font-medium text-emerald-400 hover:text-emerald-300 transition-all"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-medium text-emerald-400 transition-all"
             >
               <Plus className="w-3.5 h-3.5" />
-              {isDropdownOpen ? "Close Selector" : "Select Products"}
+              {isDropdownOpen ? "Close List" : "Browse Products"}
             </button>
           </div>
         </div>
@@ -482,35 +576,34 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
         <div ref={dropdownRef} className="relative">
           <label className="block text-xs font-medium text-slate-300 mb-1.5 flex items-center justify-between">
             <span className="flex items-center gap-2">
-              Select Products / Variants
+              Select Product(s) / Variant(s)
               <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                Multi-Select Enabled
+                Multi-Select
               </span>
             </span>
             <span className="text-[11px] text-slate-400">
-              Click to open options list &amp; check multiple items
+              Click to open catalog &amp; check multiple items
             </span>
           </label>
 
-          {/* Trigger button mimicking the select field */}
+          {/* Trigger button */}
           <button
             type="button"
             onClick={() => setIsDropdownOpen((prev) => !prev)}
-            className={`w-full px-4 py-3 rounded-xl bg-slate-900 border text-left flex items-center justify-between transition-all group ${
-              isDropdownOpen
-                ? "border-emerald-500 ring-2 ring-emerald-500/30"
-                : "border-slate-700/80 hover:border-slate-600"
-            }`}
+            className={`w-full px-4 py-3 rounded-xl bg-slate-900 border text-left flex items-center justify-between transition-all group ${isDropdownOpen
+              ? "border-emerald-500 ring-2 ring-emerald-500/30"
+              : "border-slate-700/80 hover:border-slate-600"
+              }`}
           >
             <div className="flex items-center gap-3 min-w-0 flex-1 mr-3">
               <Boxes className="w-4 h-4 text-emerald-400 shrink-0" />
               {items.length === 0 ? (
                 <span className="text-slate-400 text-sm">
-                  Click here to select one or multiple products to dispatch...
+                  Click here to browse and select products to dispatch...
                 </span>
               ) : (
                 <div className="flex items-center gap-2 flex-wrap min-w-0">
-                  <span className="text-white text-sm font-medium">
+                  <span className="text-white text-sm font-semibold">
                     {items.length} {items.length === 1 ? "product" : "products"} selected:
                   </span>
                   <div className="flex items-center gap-1.5 flex-wrap">
@@ -520,14 +613,14 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                       return (
                         <span
                           key={it.id}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs truncate max-w-[200px]"
+                          className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-medium truncate max-w-[220px]"
                         >
                           {productInfo.productTitle}
                         </span>
                       );
                     })}
                     {items.length > 3 && (
-                      <span className="text-xs text-slate-400 font-mono">
+                      <span className="text-xs text-slate-400 font-mono font-medium">
                         +{items.length - 3} more
                       </span>
                     )}
@@ -537,13 +630,9 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
-              <span className="text-xs font-mono font-medium text-slate-400 group-hover:text-slate-300">
-                {items.length}/{availableItems.length}
-              </span>
               <ChevronDown
-                className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${
-                  isDropdownOpen ? "rotate-180 text-emerald-400" : ""
-                }`}
+                className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${isDropdownOpen ? "rotate-180 text-emerald-400" : ""
+                  }`}
               />
             </div>
           </button>
@@ -613,26 +702,24 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                       <div
                         key={prod.variantId}
                         onClick={() => toggleVariantSelection(prod.variantId)}
-                        className={`flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all ${
-                          isSelected
-                            ? "bg-emerald-500/10 border border-emerald-500/30 text-white"
-                            : "hover:bg-slate-800/60 border border-transparent text-slate-300"
-                        }`}
+                        className={`flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all ${isSelected
+                          ? "bg-emerald-500/10 border border-emerald-500/30 text-white"
+                          : "hover:bg-slate-800/60 border border-transparent text-slate-300"
+                          }`}
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1 mr-4">
                           {/* Checkbox */}
                           <div
-                            className={`w-5 h-5 rounded-lg border flex items-center justify-center shrink-0 transition-colors ${
-                              isSelected
-                                ? "bg-emerald-500 border-emerald-500 text-slate-950 font-bold"
-                                : "border-slate-600 bg-slate-900 group-hover:border-slate-500"
-                            }`}
+                            className={`w-5 h-5 rounded-lg border flex items-center justify-center shrink-0 transition-colors ${isSelected
+                              ? "bg-emerald-500 border-emerald-500 text-slate-950 font-bold"
+                              : "border-slate-600 bg-slate-900 group-hover:border-slate-500"
+                              }`}
                           >
                             {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                           </div>
 
                           <div className="min-w-0">
-                            <p className="text-sm font-medium text-white truncate">
+                            <p className="text-sm font-semibold text-white truncate">
                               {prod.productTitle}
                             </p>
                             <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
@@ -654,11 +741,10 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                         {/* Stock Badge */}
                         <div className="shrink-0 text-right">
                           <span
-                            className={`px-2.5 py-1 rounded-md text-xs font-mono font-semibold ${
-                              isOutOfStock
-                                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                                : "bg-slate-800 text-emerald-400 border border-slate-700/80"
-                            }`}
+                            className={`px-2.5 py-1 rounded-md text-xs font-mono font-semibold ${isOutOfStock
+                              ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                              : "bg-slate-800 text-emerald-400 border border-slate-700/80"
+                              }`}
                           >
                             {prod.stock} available
                           </span>
@@ -685,27 +771,54 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
             </div>
           )}
         </div>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* STEP 03: LINE ITEMS, QUANTITIES & EDITABLE PRICING */}
+      {/* ========================================================================= */}
+      <div className="rounded-2xl border border-slate-800/80 bg-[#0c1220]/80 backdrop-blur-sm p-6 shadow-xl space-y-6">
+        <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
+          <div className="flex items-center gap-3">
+            <span className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-xs font-bold flex items-center justify-center">
+              03
+            </span>
+            <div>
+              <h2 className="text-base font-bold text-white tracking-tight">
+                Line Items, Quantities &amp; Unit Pricing
+              </h2>
+              <p className="text-xs text-slate-400">
+                Adjust quantities and customize unit prices specifically for this dispatch shipment.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-400 font-mono font-medium">
+              Total Units: <strong className="text-emerald-400">{totalQuantity}</strong>
+            </span>
+          </div>
+        </div>
 
         {/* BATCH QUANTITY HELPER TOOLBAR (When multiple items selected) */}
         {items.length > 1 && (
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-slate-900/40 border border-slate-800">
-            <span className="text-xs text-slate-400 flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-slate-900/60 border border-slate-800">
+            <span className="text-xs text-slate-300 flex items-center gap-1.5 font-medium">
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
               Quick Batch Tool: Set same quantity for all selected products
             </span>
             <div className="flex items-center gap-2">
               <input
                 type="number"
                 min="1"
-                placeholder="Qty (e.g. 5)"
+                placeholder="Qty (e.g. 10)"
                 value={batchQty}
                 onChange={(e) => setBatchQty(e.target.value)}
-                className="w-24 px-2.5 py-1 text-xs rounded-lg bg-slate-900 border border-slate-700 text-white font-mono focus:outline-none focus:border-emerald-500"
+                className="w-28 px-2.5 py-1 text-xs rounded-lg bg-slate-950 border border-slate-700 text-white font-mono focus:outline-none focus:border-emerald-500"
               />
               <button
                 type="button"
                 onClick={handleApplyBatchQty}
-                className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-emerald-400 border border-slate-700 transition-colors"
+                className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-emerald-400 border border-slate-700 transition-colors"
               >
                 Apply to All
               </button>
@@ -722,7 +835,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
             <div>
               <p className="text-sm font-semibold text-white">No products selected yet</p>
               <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-                Click the dropdown above or click 'Select Products' to choose products for this shipment.
+                Use Step 02 above to select products from your warehouse inventory.
               </p>
             </div>
             <button
@@ -750,11 +863,10 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
               return (
                 <div
                   key={lineItem.id}
-                  className={`p-4 rounded-xl border transition-all ${
-                    isExceeded
-                      ? "border-rose-500/50 bg-rose-500/5"
-                      : "border-slate-800 bg-slate-900/50 hover:border-slate-700/80"
-                  } flex flex-col lg:flex-row items-start lg:items-center gap-4`}
+                  className={`p-4 rounded-xl border transition-all ${isExceeded
+                    ? "border-rose-500/50 bg-rose-500/5"
+                    : "border-slate-800 bg-slate-900/60 hover:border-slate-700/80"
+                    } flex flex-col lg:flex-row items-start lg:items-center gap-4`}
                 >
                   {/* Row Index */}
                   <div className="flex items-center gap-3 shrink-0 text-xs font-mono text-slate-500">
@@ -778,7 +890,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                         </span>
                       )}
                       <span className="font-mono text-slate-400 text-xs">
-                        Default Price: Rs {defaultPrice.toLocaleString()}
+                        Default: Rs {defaultPrice.toLocaleString()}
                       </span>
                     </div>
                   </div>
@@ -789,13 +901,12 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                       Current Stock
                     </span>
                     <div
-                      className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold font-mono border text-center ${
-                        maxStock > 0
-                          ? "bg-slate-800/80 text-emerald-400 border-slate-700/60"
-                          : "bg-rose-500/10 text-rose-400 border-rose-500/30"
-                      }`}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold font-mono border text-center ${maxStock > 0
+                        ? "bg-slate-800/80 text-emerald-400 border-slate-700/60"
+                        : "bg-rose-500/10 text-rose-400 border-rose-500/30"
+                        }`}
                     >
-                      {maxStock} available
+                      {maxStock} in stock
                     </div>
                   </div>
 
@@ -827,18 +938,12 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                         step="any"
                         value={lineItem.price === 0 ? "0" : lineItem.price || ""}
                         onChange={(e) => handleUpdatePrice(lineItem.id, e.target.value)}
-                        className={`w-full pl-8 pr-2.5 py-1.5 rounded-lg bg-slate-900 border text-sm font-mono text-right focus:outline-none transition-all ${
-                          isPriceCustomized
-                            ? "border-amber-500/80 text-amber-300 focus:ring-1 focus:ring-amber-500/50"
-                            : "border-slate-700/80 text-white focus:ring-1 focus:ring-emerald-500/50"
-                        }`}
+                        className={`w-full pl-8 pr-2.5 py-1.5 rounded-lg bg-slate-950 border text-sm font-mono text-right focus:outline-none transition-all ${isPriceCustomized
+                          ? "border-amber-500/80 text-amber-300 focus:ring-1 focus:ring-amber-500/50"
+                          : "border-slate-700/80 text-white focus:ring-1 focus:ring-emerald-500/50"
+                          }`}
                       />
                     </div>
-                    {isPriceCustomized && (
-                      <span className="text-[10px] text-amber-400/90 font-mono mt-0.5 block text-right">
-                        Customized price
-                      </span>
-                    )}
                   </div>
 
                   {/* Dispatch Quantity Input with Stepper Controls */}
@@ -873,11 +978,10 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                         max={maxStock}
                         value={lineItem.quantity || ""}
                         onChange={(e) => handleUpdateQuantity(lineItem.id, e.target.value)}
-                        className={`w-full px-2 py-1.5 rounded-lg bg-slate-900 border text-sm font-mono text-center focus:outline-none transition-all ${
-                          isExceeded
-                            ? "border-rose-500 text-rose-300 focus:ring-2 focus:ring-rose-500/40"
-                            : "border-slate-700/80 text-white focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500"
-                        }`}
+                        className={`w-full px-2 py-1.5 rounded-lg bg-slate-950 border text-sm font-mono text-center focus:outline-none transition-all ${isExceeded
+                          ? "border-rose-500 text-rose-300 focus:ring-2 focus:ring-rose-500/40"
+                          : "border-slate-700/80 text-white focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500"
+                          }`}
                       />
 
                       <button
@@ -925,23 +1029,29 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
         )}
       </div>
 
-      {/* 3. DISCOUNT & PRICING BREAKDOWN SECTION */}
-      <div className="rounded-2xl border border-slate-800/80 bg-[#0c1220]/70 backdrop-blur-sm p-6 shadow-xl space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-              <Tag className="w-4 h-4 text-emerald-400" />
-              3. Discount &amp; Pricing Breakdown
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Apply a special discount for this shipment (percentage or fixed amount).
-            </p>
+      {/* ========================================================================= */}
+      {/* STEP 04: DISCOUNT & SHIPMENT VALUATION */}
+      {/* ========================================================================= */}
+      <div className="rounded-2xl border border-slate-800/80 bg-[#0c1220]/80 backdrop-blur-sm p-6 shadow-xl space-y-6">
+        <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
+          <div className="flex items-center gap-3">
+            <span className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-xs font-bold flex items-center justify-center">
+              04
+            </span>
+            <div>
+              <h2 className="text-base font-bold text-white tracking-tight">
+                Discount &amp; Shipment Valuation
+              </h2>
+              <p className="text-xs text-slate-400">
+                Apply distributor/wholesale discounts and calculate net invoice value.
+              </p>
+            </div>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
           {/* Discount Controls */}
-          <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-4">
+          <div className="p-5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-4">
             <div className="flex items-center justify-between">
               <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
                 <Percent className="w-3.5 h-3.5 text-emerald-400" />
@@ -953,24 +1063,22 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                 <button
                   type="button"
                   onClick={() => setDiscountType("percentage")}
-                  className={`px-2.5 py-1 rounded-md font-medium transition-all ${
-                    discountType === "percentage"
-                      ? "bg-emerald-500 text-slate-950 shadow-sm"
-                      : "text-slate-400 hover:text-white"
-                  }`}
+                  className={`px-3 py-1 rounded-md font-medium transition-all ${discountType === "percentage"
+                    ? "bg-emerald-500 text-slate-950 shadow-sm font-semibold"
+                    : "text-slate-400 hover:text-white"
+                    }`}
                 >
                   Percentage (%)
                 </button>
                 <button
                   type="button"
                   onClick={() => setDiscountType("fixed")}
-                  className={`px-2.5 py-1 rounded-md font-medium transition-all ${
-                    discountType === "fixed"
-                      ? "bg-emerald-500 text-slate-950 shadow-sm"
-                      : "text-slate-400 hover:text-white"
-                  }`}
+                  className={`px-3 py-1 rounded-md font-medium transition-all ${discountType === "fixed"
+                    ? "bg-emerald-500 text-slate-950 shadow-sm font-semibold"
+                    : "text-slate-400 hover:text-white"
+                    }`}
                 >
-                  Fixed Amount (Rs)
+                  Fixed (Rs)
                 </button>
               </div>
             </div>
@@ -991,9 +1099,9 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                     const val = e.target.value === "" ? "" : parseFloat(e.target.value);
                     setDiscountValue(isNaN(val as number) ? "" : (val as number));
                   }}
-                  className="w-full pl-4 pr-16 py-2.5 rounded-xl bg-slate-950 border border-slate-700/80 text-white placeholder-slate-500 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all"
+                  className="w-full pl-4 pr-16 py-2.5 rounded-xl bg-slate-950 border border-slate-700/80 text-white placeholder-slate-500 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all font-semibold"
                 />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-emerald-400">
+                <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-emerald-400">
                   {discountType === "percentage" ? "%" : "PKR / Rs"}
                 </span>
               </div>
@@ -1008,11 +1116,10 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                         key={pct}
                         type="button"
                         onClick={() => setDiscountValue(pct)}
-                        className={`px-2 py-0.5 rounded text-xs font-mono border transition-all ${
-                          discountValue === pct
-                            ? "bg-emerald-500/20 border-emerald-500 text-emerald-300"
-                            : "bg-slate-800/80 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-800"
-                        }`}
+                        className={`px-2 py-0.5 rounded text-xs font-mono border transition-all ${discountValue === pct
+                          ? "bg-emerald-500/20 border-emerald-500 text-emerald-300 font-bold"
+                          : "bg-slate-800/80 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-800"
+                          }`}
                       >
                         {pct}%
                       </button>
@@ -1034,11 +1141,10 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                         key={amt}
                         type="button"
                         onClick={() => setDiscountValue(amt)}
-                        className={`px-2 py-0.5 rounded text-xs font-mono border transition-all ${
-                          discountValue === amt
-                            ? "bg-emerald-500/20 border-emerald-500 text-emerald-300"
-                            : "bg-slate-800/80 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-800"
-                        }`}
+                        className={`px-2 py-0.5 rounded text-xs font-mono border transition-all ${discountValue === amt
+                          ? "bg-emerald-500/20 border-emerald-500 text-emerald-300 font-bold"
+                          : "bg-slate-800/80 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-800"
+                          }`}
                       >
                         Rs {amt.toLocaleString()}
                       </button>
@@ -1059,14 +1165,22 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
           </div>
 
           {/* Real-time Financial Breakdown Summary Box */}
-          <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3">
-            <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
-              Shipment Valuation
+          <div className="p-5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3">
+            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+              <span>Invoice Calculation</span>
+              <span
+                className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold uppercase ${paymentStatus === "paid"
+                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                  : "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                  }`}
+              >
+                {paymentStatus === "paid" ? "Paid In Full" : "Payment Pending"}
+              </span>
             </h3>
 
-            <div className="space-y-2 text-sm">
+            <div className="space-y-2 text-sm pt-1">
               <div className="flex items-center justify-between text-slate-300">
-                <span>Items Subtotal:</span>
+                <span>Dispatched Items Subtotal:</span>
                 <span className="font-mono font-semibold text-white">
                   Rs {subtotal.toLocaleString()}
                 </span>
@@ -1074,7 +1188,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
 
               <div className="flex items-center justify-between text-slate-300">
                 <span className="flex items-center gap-1.5">
-                  <span>Shipment Discount:</span>
+                  <span>Discount Applied:</span>
                   {discountAmount > 0 && (
                     <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
                       {discountType === "percentage" ? `${discountValue}% OFF` : "FLAT OFF"}
@@ -1082,17 +1196,16 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                   )}
                 </span>
                 <span
-                  className={`font-mono font-semibold ${
-                    discountAmount > 0 ? "text-emerald-400" : "text-slate-500"
-                  }`}
+                  className={`font-mono font-semibold ${discountAmount > 0 ? "text-emerald-400" : "text-slate-500"
+                    }`}
                 >
                   - Rs {discountAmount.toLocaleString()}
                 </span>
               </div>
 
-              <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
-                <span className="text-base font-bold text-white">Net Total Value:</span>
-                <span className="text-xl font-bold font-mono text-emerald-400">
+              <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
+                <span className="text-base font-bold text-white">Net Shipment Total:</span>
+                <span className="text-2xl font-extrabold font-mono text-emerald-400">
                   Rs {totalAmount.toLocaleString()}
                 </span>
               </div>
@@ -1101,8 +1214,10 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
         </div>
       </div>
 
-      {/* Summary & Submit Footer */}
-      <div className="rounded-2xl border border-slate-800/80 bg-[#0c1220]/90 backdrop-blur-md p-6 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6">
+      {/* ========================================================================= */}
+      {/* FINAL FLOATING ACTION BAR */}
+      {/* ========================================================================= */}
+      <div className="rounded-2xl border border-slate-800/80 bg-[#0c1220]/95 backdrop-blur-md p-6 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6  bottom-4 z-20">
         <div className="flex items-center gap-6 w-full md:w-auto flex-wrap">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center text-emerald-400">
@@ -1110,7 +1225,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
             </div>
             <div>
               <p className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
-                Total Dispatched
+                Total Units
               </p>
               <p className="text-xl font-extrabold text-white font-mono">
                 {totalQuantity} <span className="text-xs font-normal text-slate-400">units</span>
@@ -1133,7 +1248,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
 
           <div>
             <p className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
-              Net Shipment Value
+              Net Total Value
             </p>
             <p className="text-lg font-bold text-emerald-400 font-mono">
               Rs {totalAmount.toLocaleString()}
@@ -1152,12 +1267,12 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
           <button
             type="submit"
             disabled={isSubmitting || items.length === 0 || totalQuantity <= 0 || hasExceededStock}
-            className="px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-sm transition-all shadow-lg shadow-emerald-500/25 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            className="px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm transition-all shadow-lg shadow-emerald-500/25 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {isSubmitting ? (
               <>
                 <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-                Processing Dispatch...
+                Deducting Stock &amp; Syncing...
               </>
             ) : (
               <>
