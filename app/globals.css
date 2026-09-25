@@ -15,7 +15,7 @@ body {
 
 @page {
   size: A4 portrait;
-  margin: 0mm !important; /* Eliminates browser default headers (date/title) and footers (URL/page numbers) */
+  margin: 0mm !important; 
 }
 
 @media print {
