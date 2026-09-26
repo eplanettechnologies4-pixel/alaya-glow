@@ -28,6 +28,8 @@ import {
   CreditCard,
   User,
   Hash,
+  Phone,
+  MapPin,
 } from "lucide-react";
 
 export interface DispatchableItem {
@@ -63,6 +65,8 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
 
   // Step 1: Consignee & Payment Details
   const [recipientName, setRecipientName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
   const [notes, setNotes] = useState("");
   const [paymentStatus, setPaymentStatus] = useState<"unpaid" | "paid">("unpaid");
 
@@ -340,6 +344,8 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
     try {
       const payload = {
         recipientName: recipientName.trim(),
+        address: address.trim() || undefined,
+        phone: phone.trim() || undefined,
         notes: notes.trim() || undefined,
         paymentStatus,
         discount: {
@@ -469,15 +475,45 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
               <User className="w-3.5 h-3.5 text-emerald-400" />
-              Recipient / Consignee Name <span className="text-emerald-400">*</span>
+              Party / Recipient Name <span className="text-emerald-400">*</span>
             </label>
             <input
               type="text"
               required
-              placeholder="e.g. Lahore Central Distributor / Irfan Sb (Waqar Praanda)"
+              placeholder="e.g. Bilal / Lahore Central Distributor"
               value={recipientName}
               onChange={(e) => setRecipientName(e.target.value)}
               className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all font-medium"
+            />
+          </div>
+
+          {/* Phone Number */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
+              <Phone className="w-3.5 h-3.5 text-emerald-400" />
+              Phone / Contact Number
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. "
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all font-mono"
+            />
+          </div>
+
+          {/* Delivery Address */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
+              <MapPin className="w-3.5 h-3.5 text-emerald-400" />
+              Delivery / Party Address
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. "
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all"
             />
           </div>
 
@@ -517,7 +553,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
               </button>
             </div>
             <p className="text-[11px] text-slate-500 mt-1">
-              You can easily change status from Unpaid to Paid on the receipt page anytime when payment arrives.
+              You can easily manage this status anytime from Dispatch History.
             </p>
           </div>
 

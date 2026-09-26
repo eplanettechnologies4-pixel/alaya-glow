@@ -3,8 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import PrintButton from "@/components/dispatch/PrintButton";
-import ChallanPaymentDropdown from "@/components/dispatch/ChallanPaymentDropdown";
 import DeleteDispatchButton from "@/components/dispatch/DeleteDispatchButton";
+import DispatchStatusDropdown from "@/components/dispatch/DispatchStatusDropdown";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -78,6 +78,8 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
   let displayNotes = dispatch.notes || "";
   let paymentStatus: "paid" | "unpaid" = "unpaid";
   let paidAt: string | null = null;
+  let parsedAddress: string | null = null;
+  let parsedPhone: string | null = null;
   let pricingData: {
     subtotal?: number;
     discount?: { type: "percentage" | "fixed"; value: number; amount: number };
@@ -93,6 +95,12 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
         paymentStatus = parsed.paymentStatus === "paid" ? "paid" : "unpaid";
         paidAt = parsed.paidAt || null;
         pricingData = parsed.pricing || null;
+        if (typeof parsed.address === "string" && parsed.address.trim()) {
+          parsedAddress = parsed.address.trim();
+        }
+        if (typeof parsed.phone === "string" && parsed.phone.trim()) {
+          parsedPhone = parsed.phone.trim();
+        }
       }
     } catch {
       // Keep plain text fallback
@@ -114,7 +122,7 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
     const variant = row.product_variants;
     const product = variant?.products;
     const productTitle = product?.title || "Product";
-    
+
     // Extract pack size (e.g. "100ml" or variant title)
     let packSize = "100ml";
     if (variant?.title && variant.title !== "Default Title") {
@@ -130,8 +138,8 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
       typeof variant?.price === "number" && variant.price > 0
         ? variant.price
         : typeof product?.price_min === "number" && product.price_min > 0
-        ? product.price_min
-        : 0;
+          ? product.price_min
+          : 0;
 
     const pricingItem = pricingMap.get(row.variant_id);
     const unitPrice = pricingItem?.unitPrice ?? fallbackPrice;
@@ -157,16 +165,18 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
   // Parse party address, phone, and DC / Order numbers
   let dcNo = dispatch.id.slice(0, 4).toUpperCase();
   let orderNo = dispatch.id.slice(0, 4).toUpperCase();
-  let partyAddress = "Kidmat Markaz Faisalabad";
-  let partyPhone = "0317-0685093";
+  let partyAddress = parsedAddress
+    ? parsedAddress
+    : displayNotes && !/^\d+$/.test(displayNotes.trim())
+      ? displayNotes.trim()
+      : "";
+  let partyPhone = parsedPhone ? parsedPhone : "";
 
-  if (displayNotes) {
+  if (displayNotes && !parsedAddress) {
     const cleanNotes = displayNotes.trim();
     if (/^\d+$/.test(cleanNotes)) {
       dcNo = cleanNotes.padStart(4, "0");
       orderNo = cleanNotes.padStart(4, "0");
-    } else {
-      partyAddress = cleanNotes;
     }
   }
 
@@ -220,6 +230,12 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
           </div>
 
           <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <DispatchStatusDropdown
+                dispatchId={dispatch.id}
+                initialStatus={paymentStatus}
+              />
+            </div>
             <div className="hidden sm:flex items-center gap-1.5 text-xs text-emerald-400 font-medium bg-emerald-500/10 px-3 py-1.5 rounded-lg border border-emerald-500/20">
               <CheckCircle2 className="w-4 h-4" />
               Shopify Synced
@@ -237,7 +253,7 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
         {/* Main Printable Delivery Challan Card - Exactly matching the Reference Design */}
         <div className="max-w-3xl mx-auto bg-white text-stone-900 shadow-2xl rounded-sm overflow-hidden print:border-none print:shadow-none print:bg-white print:m-0 print:max-w-none print:w-full print:rounded-none challan-page print:max-h-[285mm] print:overflow-hidden">
           <div className="p-8 sm:p-12 print:p-8 text-stone-900 space-y-6">
-            
+
             {/* 1. Header: Alaya Glow & Delivery Challan */}
             <div className="text-center space-y-1">
               <h1 className="text-3xl sm:text-4xl font-bold font-serif text-stone-900 tracking-tight">
@@ -292,7 +308,7 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
                 </div>
               </div>
 
-              <div className="grid grid-cols-12 divide-x divide-stone-300 border-b border-stone-300">
+              <div className="grid grid-cols-12 divide-x divide-stone-300">
                 {/* Left: Phone No. */}
                 <div className="col-span-3 sm:col-span-2 py-2 px-3 font-semibold text-[11px] uppercase tracking-wider text-stone-700 bg-stone-50/50">
                   PHONE NO.
@@ -306,23 +322,6 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
                 </div>
                 <div className="col-span-8 sm:col-span-3 py-2 px-3 font-medium text-stone-900">
                   {challanDate}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-12 divide-x divide-stone-300">
-                {/* Left: Empty Cell */}
-                <div className="col-span-12 sm:col-span-7 py-2 px-3 text-stone-400 text-[11px]">
-                  {/* Spacer or extra notes */}
-                </div>
-                {/* Right: Payment Status */}
-                <div className="col-span-4 sm:col-span-2 py-2 px-3 font-semibold text-[11px] uppercase tracking-wider text-stone-700 bg-stone-50/50">
-                  PAYMENT
-                </div>
-                <div className="col-span-8 sm:col-span-3 py-1.5 px-3">
-                  <ChallanPaymentDropdown
-                    dispatchId={dispatch.id}
-                    initialStatus={paymentStatus}
-                  />
                 </div>
               </div>
             </div>

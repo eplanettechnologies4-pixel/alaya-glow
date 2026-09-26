@@ -96,7 +96,7 @@ export default function DeleteDispatchButton({
       {/* Confirmation Modal */}
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="relative w-full max-w-md bg-[#0c1220] border border-slate-800 rounded-2xl shadow-2xl p-6 text-left text-slate-100 space-y-4">
+          <div className="relative w-full bg-[#0c1220] border border-slate-800 rounded-2xl shadow-2xl p-6 text-left text-slate-100 space-y-4" style={{ maxWidth: "33rem" }}>
             {/* Header */}
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3">
@@ -124,11 +124,11 @@ export default function DeleteDispatchButton({
 
             {/* Description */}
             <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 text-xs space-y-2 text-slate-300">
-              <p>
+              <p style={{ whiteSpace: "normal" }}>
                 Are you sure you want to completely delete the dispatch receipt for{" "}
                 <strong className="text-white">{recipientName}</strong>?
               </p>
-              <p className="text-[11px] text-rose-300/90 font-medium">
+              <p className="text-[11px] text-rose-300/90 font-medium" style={{ whiteSpace: "normal" }}>
                 ⚠️ This will permanently remove the record and all associated line items from the backend database.
               </p>
             </div>
@@ -147,7 +147,7 @@ export default function DeleteDispatchButton({
                   <RotateCcw className="w-3.5 h-3.5" />
                   Restore Stock to Inventory
                 </span>
-                <p className="text-[11px] text-slate-400 mt-0.5">
+                <p className="text-[11px] text-slate-400 mt-0.5" style={{ whiteSpace: "normal" }}>
                   Automatically add deducted quantities back into warehouse stock and sync with Shopify.
                 </p>
               </div>

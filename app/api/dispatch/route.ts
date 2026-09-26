@@ -14,6 +14,8 @@ interface DispatchItemInput {
 
 interface DispatchRequestBody {
   recipientName: string;
+  address?: string;
+  phone?: string;
   notes?: string;
   paymentStatus?: "paid" | "unpaid";
   discount?: {
@@ -29,7 +31,7 @@ interface DispatchRequestBody {
 export async function POST(request: NextRequest) {
   try {
     const body: DispatchRequestBody = await request.json();
-    const { recipientName, notes, paymentStatus, discount, subtotal, totalAmount, items } = body;
+    const { recipientName, address, phone, notes, paymentStatus, discount, subtotal, totalAmount, items } = body;
 
     // 1. Validation
     if (!recipientName || typeof recipientName !== "string" || !recipientName.trim()) {
@@ -157,6 +159,8 @@ export async function POST(request: NextRequest) {
 
     const notesToSave = JSON.stringify({
       text: rawNotes,
+      address: address?.trim() || "",
+      phone: phone?.trim() || "",
       paymentStatus: effectivePaymentStatus,
       paidAt: effectivePaymentStatus === "paid" ? new Date().toISOString() : null,
       pricing: {
