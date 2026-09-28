@@ -43,6 +43,7 @@ export default function DispatchHistoryTable({ initialDispatches }: DispatchHist
       let paymentStatus: "paid" | "unpaid" = "unpaid";
       let address = "";
       let phone = "";
+      let customDateStr: string | null = null;
 
       if (item.notes && item.notes.trim().startsWith("{")) {
         try {
@@ -50,6 +51,9 @@ export default function DispatchHistoryTable({ initialDispatches }: DispatchHist
           if (parsed && typeof parsed === "object") {
             displayRemarks = parsed.text || "—";
             paymentStatus = parsed.paymentStatus === "paid" ? "paid" : "unpaid";
+            if (typeof parsed.dispatchDate === "string" && parsed.dispatchDate.trim()) {
+              customDateStr = parsed.dispatchDate.trim();
+            }
             if (typeof parsed.pricing?.totalAmount === "number") {
               totalAmountVal = parsed.pricing.totalAmount;
             }
@@ -68,13 +72,22 @@ export default function DispatchHistoryTable({ initialDispatches }: DispatchHist
         }
       }
 
-      const formattedDate = new Date(item.created_at).toLocaleString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
+      let formattedDate = "";
+      if (customDateStr && /^\d{4}-\d{2}-\d{2}$/.test(customDateStr)) {
+        const [year, month, day] = customDateStr.split("-");
+        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const mIdx = parseInt(month, 10) - 1;
+        const mName = monthNames[mIdx] || month;
+        formattedDate = `${mName} ${parseInt(day, 10)}, ${year}`;
+      } else {
+        formattedDate = new Date(item.created_at).toLocaleString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
 
       return {
         ...item,

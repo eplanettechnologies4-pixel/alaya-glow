@@ -30,6 +30,7 @@ import {
   Hash,
   Phone,
   MapPin,
+  Calendar,
 } from "lucide-react";
 
 export interface DispatchableItem {
@@ -63,8 +64,18 @@ const generateId = () => {
 export default function DispatchForm({ availableItems }: DispatchFormProps) {
   const router = useRouter();
 
+  // Helper to format today's local date as YYYY-MM-DD
+  const getTodayDateString = () => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, "0");
+    const day = String(today.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
   // Step 1: Consignee & Payment Details
   const [recipientName, setRecipientName] = useState("");
+  const [dispatchDate, setDispatchDate] = useState<string>(getTodayDateString);
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [notes, setNotes] = useState("");
@@ -344,6 +355,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
     try {
       const payload = {
         recipientName: recipientName.trim(),
+        dispatchDate: dispatchDate.trim() || undefined,
         address: address.trim() || undefined,
         phone: phone.trim() || undefined,
         notes: notes.trim() || undefined,
@@ -487,6 +499,21 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
             />
           </div>
 
+          {/* Dispatch Date */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+              Dispatch Date <span className="text-emerald-400">*</span>
+            </label>
+            <input
+              type="date"
+              required
+              value={dispatchDate}
+              onChange={(e) => setDispatchDate(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all [color-scheme:dark] font-medium"
+            />
+          </div>
+
           {/* Phone Number */}
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
@@ -495,7 +522,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
             </label>
             <input
               type="text"
-              placeholder="e.g. "
+              placeholder="e.g. 0300-1234567"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all font-mono"
@@ -510,7 +537,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
             </label>
             <input
               type="text"
-              placeholder="e.g. "
+              placeholder="e.g. Shop #4, Main Market, Faisalabad"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
               className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all"
@@ -558,7 +585,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
           </div>
 
           {/* Shipment Notes */}
-          <div className="md:col-span-2">
+          <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
               <FileText className="w-3.5 h-3.5 text-emerald-400" />
               Shipment Remarks &amp; Reference Notes (Optional)
@@ -568,7 +595,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
               placeholder="e.g. Invoice #1008, dispatch via Cargo, delivery receipt confirmation"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all resize-none"
+              className="w-full px-4 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all resize-none"
             />
           </div>
         </div>

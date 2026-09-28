@@ -14,6 +14,7 @@ interface DispatchItemInput {
 
 interface DispatchRequestBody {
   recipientName: string;
+  dispatchDate?: string;
   address?: string;
   phone?: string;
   notes?: string;
@@ -31,7 +32,7 @@ interface DispatchRequestBody {
 export async function POST(request: NextRequest) {
   try {
     const body: DispatchRequestBody = await request.json();
-    const { recipientName, address, phone, notes, paymentStatus, discount, subtotal, totalAmount, items } = body;
+    const { recipientName, dispatchDate, address, phone, notes, paymentStatus, discount, subtotal, totalAmount, items } = body;
 
     // 1. Validation
     if (!recipientName || typeof recipientName !== "string" || !recipientName.trim()) {
@@ -159,6 +160,7 @@ export async function POST(request: NextRequest) {
 
     const notesToSave = JSON.stringify({
       text: rawNotes,
+      dispatchDate: dispatchDate?.trim() || null,
       address: address?.trim() || "",
       phone: phone?.trim() || "",
       paymentStatus: effectivePaymentStatus,
@@ -179,13 +181,28 @@ export async function POST(request: NextRequest) {
     // 3. Insert row into manual_dispatches
     const totalQuantity = validatedItems.reduce((acc, it) => acc + it.quantity, 0);
 
+    let createdAtToSave: string | undefined = undefined;
+    if (dispatchDate && typeof dispatchDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dispatchDate.trim())) {
+      const now = new Date();
+      const [year, month, day] = dispatchDate.trim().split("-").map(Number);
+      const customDate = new Date(Date.UTC(year, month - 1, day, now.getUTCHours(), now.getUTCMinutes(), now.getUTCSeconds()));
+      if (!isNaN(customDate.getTime())) {
+        createdAtToSave = customDate.toISOString();
+      }
+    }
+
+    const insertPayload: Record<string, any> = {
+      recipient_name: recipientName.trim(),
+      notes: notesToSave,
+      total_quantity: totalQuantity,
+    };
+    if (createdAtToSave) {
+      insertPayload.created_at = createdAtToSave;
+    }
+
     const { data: dispatch, error: dispatchErr } = await supabaseAdmin
       .from("manual_dispatches")
-      .insert({
-        recipient_name: recipientName.trim(),
-        notes: notesToSave,
-        total_quantity: totalQuantity,
-      })
+      .insert(insertPayload)
       .select("id")
       .single();
 

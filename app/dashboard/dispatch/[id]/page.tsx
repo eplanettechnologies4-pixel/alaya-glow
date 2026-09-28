@@ -65,14 +65,23 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
 
   // Format date like: 24-Sep-26
   const formatChallanDate = (dateStr: string) => {
+    if (!dateStr) return "";
+    const trimmed = dateStr.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const [year, month, day] = trimmed.split("-");
+      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const mIdx = parseInt(month, 10) - 1;
+      const mName = monthNames[mIdx] || month;
+      const y2 = year.slice(-2);
+      return `${day.padStart(2, "0")}-${mName}-${y2}`;
+    }
     const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
     const day = String(d.getDate()).padStart(2, "0");
     const month = d.toLocaleString("en-US", { month: "short" });
     const year = String(d.getFullYear()).slice(-2);
     return `${day}-${month}-${year}`;
   };
-
-  const challanDate = formatChallanDate(dispatch.created_at);
 
   // Parse optional pricing, discount, and paymentStatus metadata from notes
   let displayNotes = dispatch.notes || "";
@@ -80,6 +89,7 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
   let paidAt: string | null = null;
   let parsedAddress: string | null = null;
   let parsedPhone: string | null = null;
+  let parsedDispatchDate: string | null = null;
   let pricingData: {
     subtotal?: number;
     discount?: { type: "percentage" | "fixed"; value: number; amount: number };
@@ -95,6 +105,9 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
         paymentStatus = parsed.paymentStatus === "paid" ? "paid" : "unpaid";
         paidAt = parsed.paidAt || null;
         pricingData = parsed.pricing || null;
+        if (typeof parsed.dispatchDate === "string" && parsed.dispatchDate.trim()) {
+          parsedDispatchDate = parsed.dispatchDate.trim();
+        }
         if (typeof parsed.address === "string" && parsed.address.trim()) {
           parsedAddress = parsed.address.trim();
         }
@@ -106,6 +119,8 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
       // Keep plain text fallback
     }
   }
+
+  const challanDate = formatChallanDate(parsedDispatchDate || dispatch.created_at);
 
   const pricingMap = new Map<string, { unitPrice: number; totalPrice: number }>();
   if (pricingData?.items) {
