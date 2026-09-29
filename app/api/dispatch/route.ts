@@ -10,6 +10,7 @@ interface DispatchItemInput {
   quantity: number;
   unitPrice?: number;
   totalPrice?: number;
+  packSize?: string;
 }
 
 interface DispatchRequestBody {
@@ -19,6 +20,7 @@ interface DispatchRequestBody {
   phone?: string;
   notes?: string;
   paymentStatus?: "paid" | "unpaid";
+  packagingType?: "TUBES" | "JAR" | "TUBE + JAR" | string;
   discount?: {
     type: "percentage" | "fixed";
     value: number;
@@ -29,10 +31,99 @@ interface DispatchRequestBody {
   items: DispatchItemInput[];
 }
 
+interface EditDispatchRequestBody extends DispatchRequestBody {
+  dispatchId: string;
+}
+
+/**
+ * Helper to sync quantity to Shopify available inventory
+ */
+async function syncQuantityToShopify(
+  shopifyVariantId: number,
+  targetQuantity: number,
+  fallbackCurrentQty: number
+) {
+  try {
+    const shopifyVariantGid = `gid://shopify/ProductVariant/${shopifyVariantId}`;
+    const variantQuery = `
+      query GetVariantInventory($id: ID!) {
+        productVariant(id: $id) {
+          id
+          inventoryItem {
+            id
+            inventoryLevels(first: 1) {
+              edges {
+                node {
+                  location {
+                    id
+                  }
+                  quantities(names: ["available"]) {
+                    name
+                    quantity
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const variantRes = await queryShopifyAdmin(variantQuery, { id: shopifyVariantGid });
+    const variantData = variantRes.data?.productVariant;
+
+    if (variantData?.inventoryItem) {
+      const inventoryItemId = variantData.inventoryItem.id;
+      const invLevels = variantData.inventoryItem.inventoryLevels?.edges || [];
+
+      if (invLevels.length > 0 && invLevels[0].node?.location?.id) {
+        const locationId = invLevels[0].node.location.id;
+        const currentQuantities = invLevels[0].node.quantities || [];
+        const availableObj = currentQuantities.find((q: any) => q.name === "available");
+        const currentShopifyQty =
+          typeof availableObj?.quantity === "number" ? availableObj.quantity : fallbackCurrentQty;
+
+        const idempotencyKey = crypto.randomUUID();
+        const setInvMutation = `
+          mutation SetInventory($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
+            inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+              inventoryAdjustmentGroup {
+                id
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }
+        `;
+
+        await queryShopifyAdmin(setInvMutation, {
+          idempotencyKey,
+          input: {
+            name: "available",
+            reason: "correction",
+            quantities: [
+              {
+                inventoryItemId,
+                locationId,
+                quantity: targetQuantity,
+                changeFromQuantity: currentShopifyQty,
+              },
+            ],
+          },
+        });
+      }
+    }
+  } catch (shopifyErr) {
+    console.warn(`Could not sync inventory to Shopify for variant ${shopifyVariantId}:`, shopifyErr);
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body: DispatchRequestBody = await request.json();
-    const { recipientName, dispatchDate, address, phone, notes, paymentStatus, discount, subtotal, totalAmount, items } = body;
+    const { recipientName, dispatchDate, address, phone, notes, paymentStatus, packagingType, discount, subtotal, totalAmount, items } = body;
 
     // 1. Validation
     if (!recipientName || typeof recipientName !== "string" || !recipientName.trim()) {
@@ -60,6 +151,7 @@ export async function POST(request: NextRequest) {
       itemTitle: string;
       unitPrice: number;
       totalPrice: number;
+      packSize: string;
     }> = [];
 
     for (const item of items) {
@@ -137,6 +229,7 @@ export async function POST(request: NextRequest) {
 
       const itemUnitPrice = typeof item.unitPrice === "number" ? item.unitPrice : fallbackPrice;
       const itemTotalPrice = typeof item.totalPrice === "number" ? item.totalPrice : itemUnitPrice * parsedQty;
+      const itemPackSize = typeof item.packSize === "string" && item.packSize.trim() ? item.packSize.trim() : "100ml";
 
       validatedItems.push({
         variantId: item.variantId,
@@ -148,12 +241,14 @@ export async function POST(request: NextRequest) {
         itemTitle: fullTitle,
         unitPrice: itemUnitPrice,
         totalPrice: itemTotalPrice,
+        packSize: itemPackSize,
       });
     }
 
-    // 2. Format notes, payment status, and pricing metadata
+    // 2. Format notes, payment status, print status, packaging type, and pricing metadata
     const rawNotes = notes?.trim() || "";
     const effectivePaymentStatus: "paid" | "unpaid" = paymentStatus === "paid" ? "paid" : "unpaid";
+    const effectivePackagingType = packagingType ? String(packagingType).toUpperCase().trim() : "TUBES";
     const calculatedSubtotal =
       typeof subtotal === "number" ? subtotal : validatedItems.reduce((acc, it) => acc + it.totalPrice, 0);
     const calculatedTotalAmount = typeof totalAmount === "number" ? totalAmount : calculatedSubtotal;
@@ -165,6 +260,9 @@ export async function POST(request: NextRequest) {
       phone: phone?.trim() || "",
       paymentStatus: effectivePaymentStatus,
       paidAt: effectivePaymentStatus === "paid" ? new Date().toISOString() : null,
+      isPrinted: false,
+      printedAt: null,
+      packagingType: effectivePackagingType,
       pricing: {
         subtotal: calculatedSubtotal,
         discount: discount || { type: "fixed", value: 0, amount: 0 },
@@ -174,6 +272,7 @@ export async function POST(request: NextRequest) {
           quantity: it.quantity,
           unitPrice: it.unitPrice,
           totalPrice: it.totalPrice,
+          packSize: it.packSize,
         })),
       },
     });
@@ -241,84 +340,9 @@ export async function POST(request: NextRequest) {
         console.error("Error updating inventory quantity in Supabase:", invUpdateErr);
       }
 
-      // c. Push decrement to Shopify via inventorySetQuantities mutation
+      // c. Push decrement to Shopify
       if (item.shopifyVariantId) {
-        try {
-          const shopifyVariantGid = `gid://shopify/ProductVariant/${item.shopifyVariantId}`;
-          const variantQuery = `
-            query GetVariantInventory($id: ID!) {
-              productVariant(id: $id) {
-                id
-                inventoryItem {
-                  id
-                  inventoryLevels(first: 1) {
-                    edges {
-                      node {
-                        location {
-                          id
-                        }
-                        quantities(names: ["available"]) {
-                          name
-                          quantity
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          `;
-
-          const variantRes = await queryShopifyAdmin(variantQuery, { id: shopifyVariantGid });
-          const variantData = variantRes.data?.productVariant;
-
-          if (variantData?.inventoryItem) {
-            const inventoryItemId = variantData.inventoryItem.id;
-            const invLevels = variantData.inventoryItem.inventoryLevels?.edges || [];
-
-            if (invLevels.length > 0 && invLevels[0].node?.location?.id) {
-              const locationId = invLevels[0].node.location.id;
-              const currentQuantities = invLevels[0].node.quantities || [];
-              const availableObj = currentQuantities.find((q: any) => q.name === "available");
-              const currentShopifyQty =
-                typeof availableObj?.quantity === "number" ? availableObj.quantity : item.quantityBefore;
-
-              const idempotencyKey = crypto.randomUUID();
-              const setInvMutation = `
-                mutation SetInventory($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
-                  inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
-                    inventoryAdjustmentGroup {
-                      id
-                    }
-                    userErrors {
-                      field
-                      message
-                    }
-                  }
-                }
-              `;
-
-              await queryShopifyAdmin(setInvMutation, {
-                idempotencyKey,
-                input: {
-                  name: "available",
-                  reason: "correction",
-                  quantities: [
-                    {
-                      inventoryItemId,
-                      locationId,
-                      quantity: item.quantityAfter,
-                      changeFromQuantity: currentShopifyQty,
-                    },
-                  ],
-                },
-              });
-            }
-          }
-        } catch (shopifyErr) {
-          console.warn(`Could not sync dispatch decrement to Shopify for variant ${item.shopifyVariantId}:`, shopifyErr);
-          // We continue processing so local dispatch record is preserved
-        }
+        await syncQuantityToShopify(item.shopifyVariantId, item.quantityAfter, item.quantityBefore);
       }
     }
 
@@ -331,6 +355,343 @@ export async function POST(request: NextRequest) {
     console.error("Error processing manual dispatch:", error);
     return NextResponse.json(
       { success: false, error: error.message || "Failed to process manual dispatch" },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * PUT: Edit an existing dispatch receipt
+ * Seamlessly reconciles inventory deltas in Supabase & Shopify without requiring full recreation
+ */
+export async function PUT(request: NextRequest) {
+  try {
+    const body: EditDispatchRequestBody = await request.json();
+    const {
+      dispatchId,
+      recipientName,
+      dispatchDate,
+      address,
+      phone,
+      notes,
+      paymentStatus,
+      packagingType,
+      discount,
+      subtotal,
+      totalAmount,
+      items,
+    } = body;
+
+    // 1. Validation
+    if (!dispatchId || typeof dispatchId !== "string") {
+      return NextResponse.json(
+        { success: false, error: "Dispatch ID is required for editing" },
+        { status: 400 }
+      );
+    }
+
+    if (!recipientName || typeof recipientName !== "string" || !recipientName.trim()) {
+      return NextResponse.json(
+        { success: false, error: "Recipient name is required" },
+        { status: 400 }
+      );
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return NextResponse.json(
+        { success: false, error: "At least one line item is required" },
+        { status: 400 }
+      );
+    }
+
+    // 2. Fetch existing dispatch record
+    const { data: existingDispatch, error: dispatchErr } = await supabaseAdmin
+      .from("manual_dispatches")
+      .select("id, notes, total_quantity, created_at")
+      .eq("id", dispatchId)
+      .maybeSingle();
+
+    if (dispatchErr || !existingDispatch) {
+      return NextResponse.json(
+        { success: false, error: "Dispatch record not found in database" },
+        { status: 404 }
+      );
+    }
+
+    // 3. Fetch existing line items for this dispatch
+    const { data: existingItems, error: itemsErr } = await supabaseAdmin
+      .from("manual_dispatch_items")
+      .select(`
+        id,
+        variant_id,
+        quantity,
+        product_variants (
+          id,
+          shopify_variant_id,
+          title
+        )
+      `)
+      .eq("dispatch_id", dispatchId);
+
+    if (itemsErr) {
+      console.error("Error fetching existing dispatch items:", itemsErr);
+      throw itemsErr;
+    }
+
+    // Map existing quantities by variant_id
+    const oldVariantMap = new Map<string, { quantity: number; shopifyVariantId: number | null }>();
+    (existingItems || []).forEach((row: any) => {
+      const prev = oldVariantMap.get(row.variant_id) || {
+        quantity: 0,
+        shopifyVariantId: (row.product_variants as any)?.shopify_variant_id || null,
+      };
+      oldVariantMap.set(row.variant_id, {
+        quantity: prev.quantity + row.quantity,
+        shopifyVariantId: (row.product_variants as any)?.shopify_variant_id || prev.shopifyVariantId,
+      });
+    });
+
+    // Map new quantities by variant_id
+    const newVariantMap = new Map<string, number>();
+    for (const it of items) {
+      const parsedQty = parseInt(String(it.quantity), 10);
+      if (isNaN(parsedQty) || parsedQty <= 0) {
+        return NextResponse.json(
+          { success: false, error: "Item quantity must be a positive integer" },
+          { status: 400 }
+        );
+      }
+      if (!it.variantId) {
+        return NextResponse.json(
+          { success: false, error: "Missing variant selection for line item" },
+          { status: 400 }
+        );
+      }
+      newVariantMap.set(it.variantId, (newVariantMap.get(it.variantId) || 0) + parsedQty);
+    }
+
+    // 4. Validate stock changes for all affected variants
+    const oldKeys = Array.from(oldVariantMap.keys());
+    const newKeys = Array.from(newVariantMap.keys());
+    const allVariantIds = Array.from(new Set(oldKeys.concat(newKeys)));
+    const variantInventoryInfo = new Map<
+      string,
+      {
+        invRowId: string;
+        currentStock: number;
+        newStock: number;
+        deltaStock: number; // positive = dispatching more (warehouse stock drops); negative = returning stock
+        shopifyVariantId: number | null;
+        title: string;
+      }
+    >();
+
+    for (const varId of allVariantIds) {
+      const { data: invRow, error: invErr } = await supabaseAdmin
+        .from("inventory")
+        .select(`
+          id,
+          quantity,
+          variant_id,
+          product_variants (
+            id,
+            shopify_variant_id,
+            title,
+            products (
+              title
+            )
+          )
+        `)
+        .eq("variant_id", varId)
+        .maybeSingle();
+
+      if (invErr) {
+        console.error("Error fetching inventory for variant:", invErr);
+        throw invErr;
+      }
+
+      if (!invRow) {
+        return NextResponse.json(
+          { success: false, error: `No inventory record found for variant ID ${varId}` },
+          { status: 400 }
+        );
+      }
+
+      const vData = invRow.product_variants as any;
+      const productTitle = vData?.products?.title || "Product";
+      const variantTitle = vData?.title && vData.title !== "Default Title" ? ` (${vData.title})` : "";
+      const fullTitle = `${productTitle}${variantTitle}`;
+
+      const oldQty = oldVariantMap.get(varId)?.quantity || 0;
+      const newQty = newVariantMap.get(varId) || 0;
+      const deltaQty = newQty - oldQty; // e.g. +3 means 3 more deducted; -2 means 2 restored
+
+      if (deltaQty > 0 && invRow.quantity < deltaQty) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Insufficient stock for "${fullTitle}". Warehouse has ${invRow.quantity} available, but you requested ${deltaQty} additional units.`,
+          },
+          { status: 400 }
+        );
+      }
+
+      const targetWarehouseStock = invRow.quantity - deltaQty;
+      variantInventoryInfo.set(varId, {
+        invRowId: invRow.id,
+        currentStock: invRow.quantity,
+        newStock: targetWarehouseStock,
+        deltaStock: deltaQty,
+        shopifyVariantId: vData?.shopify_variant_id || null,
+        title: fullTitle,
+      });
+    }
+
+    // 5. Apply inventory adjustments in Supabase & Shopify
+    for (const info of Array.from(variantInventoryInfo.values())) {
+      if (info.deltaStock !== 0) {
+        // Update Supabase
+        const { error: updateInvErr } = await supabaseAdmin
+          .from("inventory")
+          .update({
+            quantity: info.newStock,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", info.invRowId);
+
+        if (updateInvErr) {
+          console.error("Error updating inventory quantity:", updateInvErr);
+        }
+
+        // Sync to Shopify
+        if (info.shopifyVariantId) {
+          await syncQuantityToShopify(info.shopifyVariantId, info.newStock, info.currentStock);
+        }
+      }
+    }
+
+    // 6. Delete old items in manual_dispatch_items
+    const { error: delItemsErr } = await supabaseAdmin
+      .from("manual_dispatch_items")
+      .delete()
+      .eq("dispatch_id", dispatchId);
+
+    if (delItemsErr) {
+      console.error("Error deleting old dispatch items:", delItemsErr);
+      throw delItemsErr;
+    }
+
+    // 7. Insert updated line items in manual_dispatch_items
+    const validatedNewItems = [];
+    for (const item of items) {
+      const parsedQty = parseInt(String(item.quantity), 10);
+      const info = variantInventoryInfo.get(item.variantId);
+      const qtyBefore = info ? info.currentStock : 0;
+      const qtyAfter = info ? info.newStock : 0;
+
+      const { error: insErr } = await supabaseAdmin
+        .from("manual_dispatch_items")
+        .insert({
+          dispatch_id: dispatchId,
+          variant_id: item.variantId,
+          quantity: parsedQty,
+          quantity_before: qtyBefore,
+          quantity_after: qtyAfter,
+        });
+
+      if (insErr) {
+        console.error("Error inserting updated dispatch item:", insErr);
+      }
+
+      const itemPackSize = typeof item.packSize === "string" && item.packSize.trim() ? item.packSize.trim() : "100ml";
+
+      validatedNewItems.push({
+        variantId: item.variantId,
+        quantity: parsedQty,
+        unitPrice: typeof item.unitPrice === "number" ? item.unitPrice : 0,
+        totalPrice: typeof item.totalPrice === "number" ? item.totalPrice : parsedQty * (item.unitPrice || 0),
+        packSize: itemPackSize,
+      });
+    }
+
+    // 8. Update notes metadata while preserving print status and payment timestamps
+    let existingNotesMeta: any = {};
+    if (existingDispatch.notes && existingDispatch.notes.trim().startsWith("{")) {
+      try {
+        existingNotesMeta = JSON.parse(existingDispatch.notes);
+      } catch {}
+    }
+
+    const effectivePaymentStatus: "paid" | "unpaid" = paymentStatus === "paid" ? "paid" : "unpaid";
+    const effectivePackagingType = packagingType
+      ? String(packagingType).toUpperCase().trim()
+      : (existingNotesMeta.packagingType || "TUBES");
+
+    let paidAtToSave = existingNotesMeta.paidAt || null;
+    if (effectivePaymentStatus === "paid" && !paidAtToSave) {
+      paidAtToSave = new Date().toISOString();
+    } else if (effectivePaymentStatus === "unpaid") {
+      paidAtToSave = null;
+    }
+
+    const calculatedSubtotal =
+      typeof subtotal === "number" ? subtotal : validatedNewItems.reduce((acc, it) => acc + it.totalPrice, 0);
+    const calculatedTotalAmount = typeof totalAmount === "number" ? totalAmount : calculatedSubtotal;
+
+    const notesToSave = JSON.stringify({
+      text: notes?.trim() || "",
+      dispatchDate: dispatchDate?.trim() || null,
+      address: address?.trim() || "",
+      phone: phone?.trim() || "",
+      paymentStatus: effectivePaymentStatus,
+      paidAt: paidAtToSave,
+      isPrinted: existingNotesMeta.isPrinted === true,
+      printedAt: existingNotesMeta.printedAt || null,
+      packagingType: effectivePackagingType,
+      pricing: {
+        subtotal: calculatedSubtotal,
+        discount: discount || { type: "fixed", value: 0, amount: 0 },
+        totalAmount: calculatedTotalAmount,
+        items: validatedNewItems,
+      },
+    });
+
+    const totalQuantity = validatedNewItems.reduce((acc, it) => acc + it.quantity, 0);
+
+    const updatePayload: Record<string, any> = {
+      recipient_name: recipientName.trim(),
+      notes: notesToSave,
+      total_quantity: totalQuantity,
+    };
+
+    if (dispatchDate && typeof dispatchDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dispatchDate.trim())) {
+      const now = new Date();
+      const [year, month, day] = dispatchDate.trim().split("-").map(Number);
+      const customDate = new Date(Date.UTC(year, month - 1, day, now.getUTCHours(), now.getUTCMinutes(), now.getUTCSeconds()));
+      if (!isNaN(customDate.getTime())) {
+        updatePayload.created_at = customDate.toISOString();
+      }
+    }
+
+    const { error: updateDispatchErr } = await supabaseAdmin
+      .from("manual_dispatches")
+      .update(updatePayload)
+      .eq("id", dispatchId);
+
+    if (updateDispatchErr) {
+      console.error("Error updating manual_dispatches record:", updateDispatchErr);
+      throw updateDispatchErr;
+    }
+
+    return NextResponse.json({
+      success: true,
+      dispatchId,
+      totalQuantity,
+    });
+  } catch (error: any) {
+    console.error("Error updating manual dispatch:", error);
+    return NextResponse.json(
+      { success: false, error: error.message || "Failed to update manual dispatch" },
       { status: 500 }
     );
   }
@@ -426,84 +787,7 @@ export async function DELETE(request: NextRequest) {
           // b. Sync restored quantity to Shopify if variant has shopify_variant_id
           const shopifyVariantId = (item.product_variants as any)?.shopify_variant_id;
           if (shopifyVariantId) {
-            try {
-              const shopifyVariantGid = `gid://shopify/ProductVariant/${shopifyVariantId}`;
-              const variantQuery = `
-                query GetVariantInventory($id: ID!) {
-                  productVariant(id: $id) {
-                    id
-                    inventoryItem {
-                      id
-                      inventoryLevels(first: 1) {
-                        edges {
-                          node {
-                            location {
-                              id
-                            }
-                            quantities(names: ["available"]) {
-                              name
-                              quantity
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              `;
-
-              const variantRes = await queryShopifyAdmin(variantQuery, { id: shopifyVariantGid });
-              const variantData = variantRes.data?.productVariant;
-
-              if (variantData?.inventoryItem) {
-                const inventoryItemId = variantData.inventoryItem.id;
-                const invLevels = variantData.inventoryItem.inventoryLevels?.edges || [];
-
-                if (invLevels.length > 0 && invLevels[0].node?.location?.id) {
-                  const locationId = invLevels[0].node.location.id;
-                  const currentQuantities = invLevels[0].node.quantities || [];
-                  const availableObj = currentQuantities.find((q: any) => q.name === "available");
-                  const currentShopifyQty =
-                    typeof availableObj?.quantity === "number" ? availableObj.quantity : invRow.quantity;
-
-                  const idempotencyKey = crypto.randomUUID();
-                  const setInvMutation = `
-                    mutation SetInventory($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
-                      inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
-                        inventoryAdjustmentGroup {
-                          id
-                        }
-                        userErrors {
-                          field
-                          message
-                        }
-                      }
-                    }
-                  `;
-
-                  await queryShopifyAdmin(setInvMutation, {
-                    idempotencyKey,
-                    input: {
-                      name: "available",
-                      reason: "correction",
-                      quantities: [
-                        {
-                          inventoryItemId,
-                          locationId,
-                          quantity: currentShopifyQty + item.quantity,
-                          changeFromQuantity: currentShopifyQty,
-                        },
-                      ],
-                    },
-                  });
-                }
-              }
-            } catch (shopifyErr) {
-              console.warn(
-                `Could not sync restored inventory to Shopify for variant ${shopifyVariantId}:`,
-                shopifyErr
-              );
-            }
+            await syncQuantityToShopify(shopifyVariantId, restoredQty, invRow.quantity);
           }
         }
       }
@@ -551,4 +835,3 @@ export async function DELETE(request: NextRequest) {
     );
   }
 }
-

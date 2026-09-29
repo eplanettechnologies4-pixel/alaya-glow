@@ -31,6 +31,7 @@ import {
   Phone,
   MapPin,
   Calendar,
+  Pencil,
 } from "lucide-react";
 
 export interface DispatchableItem {
@@ -43,8 +44,46 @@ export interface DispatchableItem {
   imageUrl: string | null;
 }
 
+export const COMMON_PACK_SIZES = [
+  "100ml",
+  "50ml",
+  "150ml",
+  "200ml",
+  "250ml",
+  "75ml",
+  "30ml",
+  "30g",
+  "50g",
+  "100g",
+  "Jar",
+  "Tube",
+];
+
+export interface DispatchEditItem {
+  id: string;
+  variantId: string;
+  quantity: number;
+  price: number;
+  packSize?: string;
+}
+
+export interface DispatchEditData {
+  dispatchId: string;
+  recipientName: string;
+  dispatchDate: string;
+  phone: string;
+  address: string;
+  notes: string;
+  paymentStatus: "unpaid" | "paid";
+  packagingType?: "TUBES" | "JAR" | "TUBE + JAR";
+  discountType: "percentage" | "fixed";
+  discountValue: number | "";
+  items: DispatchEditItem[];
+}
+
 interface DispatchFormProps {
   availableItems: DispatchableItem[];
+  initialData?: DispatchEditData;
 }
 
 interface LineItemState {
@@ -52,6 +91,7 @@ interface LineItemState {
   variantId: string;
   quantity: number;
   price: number; // custom unit price for this manual dispatch
+  packSize: string; // custom pack size, e.g. "100ml", "50ml", "Jar", etc.
 }
 
 const generateId = () => {
@@ -61,8 +101,9 @@ const generateId = () => {
   return "id-" + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
 };
 
-export default function DispatchForm({ availableItems }: DispatchFormProps) {
+export default function DispatchForm({ availableItems, initialData }: DispatchFormProps) {
   const router = useRouter();
+  const isEditMode = Boolean(initialData?.dispatchId);
 
   // Helper to format today's local date as YYYY-MM-DD
   const getTodayDateString = () => {
@@ -73,16 +114,45 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
     return `${year}-${month}-${day}`;
   };
 
+  // Map for fast lookup
+  const itemsMap = useMemo(() => {
+    const map = new Map<string, DispatchableItem>();
+    availableItems.forEach((item) => map.set(item.variantId, item));
+    return map;
+  }, [availableItems]);
+
+  // Default pack size helper based on product title / variant title
+  const getDefaultPackSize = (variantId: string): string => {
+    const prod = itemsMap.get(variantId);
+    if (!prod) return "100ml";
+    if (prod.variantTitle && prod.variantTitle !== "Default Title") {
+      return prod.variantTitle;
+    }
+    const match = prod.productTitle.match(/\b(\d+\s*(?:ml|g|gm|kg|pcs|oz))\b/i);
+    if (match) return match[1];
+    if (/cream/i.test(prod.productTitle)) return "50g";
+    return "100ml";
+  };
+
   // Step 1: Consignee & Payment Details
-  const [recipientName, setRecipientName] = useState("");
-  const [dispatchDate, setDispatchDate] = useState<string>(getTodayDateString);
-  const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState("");
-  const [notes, setNotes] = useState("");
-  const [paymentStatus, setPaymentStatus] = useState<"unpaid" | "paid">("unpaid");
+  const [recipientName, setRecipientName] = useState(initialData?.recipientName || "");
+  const [dispatchDate, setDispatchDate] = useState<string>(() => initialData?.dispatchDate || getTodayDateString());
+  const [phone, setPhone] = useState(initialData?.phone || "");
+  const [address, setAddress] = useState(initialData?.address || "");
+  const [notes, setNotes] = useState(initialData?.notes || "");
+  const [paymentStatus, setPaymentStatus] = useState<"unpaid" | "paid">(initialData?.paymentStatus || "unpaid");
+  const [packagingType, setPackagingType] = useState<"TUBES" | "JAR" | "TUBE + JAR">(
+    initialData?.packagingType || "TUBES"
+  );
 
   // Step 2 & 3: Items & Pricing
   const [items, setItems] = useState<LineItemState[]>(() => {
+    if (initialData?.items && initialData.items.length > 0) {
+      return initialData.items.map((it) => ({
+        ...it,
+        packSize: it.packSize || "100ml",
+      }));
+    }
     if (availableItems.length > 0) {
       return [
         {
@@ -90,6 +160,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
           variantId: availableItems[0].variantId,
           quantity: 1,
           price: availableItems[0].price || 0,
+          packSize: "100ml",
         },
       ];
     }
@@ -97,8 +168,8 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
   });
 
   // Step 4: Discount & Valuation
-  const [discountType, setDiscountType] = useState<"percentage" | "fixed">("percentage");
-  const [discountValue, setDiscountValue] = useState<number | "">("");
+  const [discountType, setDiscountType] = useState<"percentage" | "fixed">(initialData?.discountType || "percentage");
+  const [discountValue, setDiscountValue] = useState<number | "">(initialData?.discountValue ?? "");
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -131,13 +202,6 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [isDropdownOpen]);
-
-  // Map for fast lookup
-  const itemsMap = useMemo(() => {
-    const map = new Map<string, DispatchableItem>();
-    availableItems.forEach((item) => map.set(item.variantId, item));
-    return map;
-  }, [availableItems]);
 
   // Set of selected variant IDs
   const selectedVariantIds = useMemo(() => {
@@ -214,6 +278,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
             variantId,
             quantity: 1,
             price: prod?.price || 0,
+            packSize: getDefaultPackSize(variantId),
           },
         ];
       }
@@ -232,6 +297,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
             variantId: prod.variantId,
             quantity: 1,
             price: prod.price || 0,
+            packSize: getDefaultPackSize(prod.variantId),
           });
         }
       }
@@ -247,6 +313,13 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
   // Remove single line item
   const handleRemoveItem = (id: string) => {
     setItems((prev) => prev.filter((it) => it.id !== id));
+  };
+
+  // Update line item custom pack size
+  const handleUpdatePackSize = (id: string, packSize: string) => {
+    setItems((prev) =>
+      prev.map((it) => (it.id === id ? { ...it, packSize } : it))
+    );
   };
 
   // Update line item quantity
@@ -354,12 +427,14 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
 
     try {
       const payload = {
+        dispatchId: initialData?.dispatchId,
         recipientName: recipientName.trim(),
         dispatchDate: dispatchDate.trim() || undefined,
         address: address.trim() || undefined,
         phone: phone.trim() || undefined,
         notes: notes.trim() || undefined,
         paymentStatus,
+        packagingType,
         discount: {
           type: discountType,
           value: Number(discountValue) || 0,
@@ -372,11 +447,12 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
           quantity: it.quantity,
           unitPrice: it.price,
           totalPrice: it.quantity * it.price,
+          packSize: it.packSize || "100ml",
         })),
       };
 
       const res = await fetch("/api/dispatch", {
-        method: "POST",
+        method: isEditMode ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
@@ -384,11 +460,13 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        throw new Error(data.error || "Failed to create dispatch");
+        throw new Error(data.error || `Failed to ${isEditMode ? "update" : "create"} dispatch`);
       }
 
-      // Redirect directly to the generated receipt
-      router.push(`/dashboard/dispatch/${data.dispatchId}`);
+      // Redirect directly to the generated or updated receipt
+      const targetDispatchId = isEditMode ? initialData!.dispatchId : data.dispatchId;
+      router.push(`/dashboard/dispatch/${targetDispatchId}`);
+      router.refresh();
     } catch (err: any) {
       console.error("Submission error:", err);
       setErrorMessage(err.message || "An unexpected error occurred while processing dispatch.");
@@ -397,7 +475,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-8 max-w-5xl mx-auto pb-16">
+    <form onSubmit={handleSubmit} className="space-y-8 max-w-6xl mx-auto pb-16">
       {/* Top Banner & Navigation */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
         <div>
@@ -410,26 +488,72 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
               Inventory
             </Link>
             <span>/</span>
-            <span className="text-slate-200">Stock Dispatch</span>
+            <Link
+              href="/dashboard/dispatch/history"
+              className="hover:text-emerald-400 transition-colors"
+            >
+              Dispatch History
+            </Link>
+            {isEditMode && initialData ? (
+              <>
+                <span>/</span>
+                <Link
+                  href={`/dashboard/dispatch/${initialData.dispatchId}`}
+                  className="hover:text-amber-400 transition-colors font-mono"
+                >
+                  Receipt #{initialData.dispatchId.slice(0, 8)}
+                </Link>
+                <span>/</span>
+                <span className="text-amber-400 font-semibold">Edit Receipt</span>
+              </>
+            ) : (
+              <>
+                <span>/</span>
+                <span className="text-slate-200">Stock Dispatch</span>
+              </>
+            )}
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 shadow-lg shadow-emerald-500/20">
-              <Truck className="w-5 h-5 stroke-[2.3]" />
+            <div
+              className={`w-10 h-10 rounded-xl flex items-center justify-center text-slate-950 shadow-lg ${
+                isEditMode
+                  ? "bg-gradient-to-tr from-amber-500 to-orange-400 shadow-amber-500/20"
+                  : "bg-gradient-to-tr from-emerald-500 to-teal-400 shadow-emerald-500/20"
+              }`}
+            >
+              {isEditMode ? (
+                <Pencil className="w-5 h-5 stroke-[2.3]" />
+              ) : (
+                <Truck className="w-5 h-5 stroke-[2.3]" />
+              )}
             </div>
-            Manual Stock Dispatch
+            {isEditMode ? "Edit Stock Dispatch Receipt" : "Manual Stock Dispatch"}
           </h1>
           <p className="text-xs sm:text-sm text-slate-400 mt-1">
-            Deduct offline distributor and wholesale shipments from Supabase warehouse inventory and push updates to Shopify.
+            {isEditMode
+              ? "Modify party info, date, line items, quantities, or pricing. Warehouse stock and Shopify inventory will adjust automatically."
+              : "Deduct offline distributor and wholesale shipments from Supabase warehouse inventory and push updates to Shopify."}
           </p>
         </div>
 
-        <Link
-          href="/dashboard/dispatch/history"
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-semibold text-slate-300 hover:text-white hover:border-slate-700 transition-all shadow-sm shrink-0"
-        >
-          <History className="w-4 h-4 text-emerald-400" />
-          Dispatch History
-        </Link>
+        <div className="flex items-center gap-2.5">
+          {isEditMode && initialData && (
+            <Link
+              href={`/dashboard/dispatch/${initialData.dispatchId}`}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-semibold text-slate-300 hover:text-white hover:border-slate-700 transition-all shadow-sm shrink-0"
+            >
+              <FileText className="w-4 h-4 text-emerald-400" />
+              View Receipt
+            </Link>
+          )}
+          <Link
+            href="/dashboard/dispatch/history"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-semibold text-slate-300 hover:text-white hover:border-slate-700 transition-all shadow-sm shrink-0"
+          >
+            <History className="w-4 h-4 text-emerald-400" />
+            Dispatch History
+          </Link>
+        </div>
       </div>
 
       {errorMessage && (
@@ -597,6 +721,43 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
               onChange={(e) => setNotes(e.target.value)}
               className="w-full px-4 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all resize-none"
             />
+          </div>
+
+          {/* Challan Packaging / Unit Label Dropdown */}
+          <div className="md:col-span-2 p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-0.5">
+              <label className="text-xs font-semibold text-white flex items-center gap-1.5">
+                <Package className="w-4 h-4 text-emerald-400" />
+                Challan Packaging / Unit Label <span className="text-emerald-400">*</span>
+              </label>
+              <p className="text-xs text-slate-400 max-w-lg">
+                Select which unit label prints in the receipt total row:{" "}
+                <span className="text-emerald-300 font-mono font-bold">TUBES</span>,{" "}
+                <span className="text-emerald-300 font-mono font-bold">JAR</span>, or{" "}
+                <span className="text-emerald-300 font-mono font-bold">TUBE + JAR</span>.
+              </p>
+            </div>
+
+            <div className="relative shrink-0 w-full sm:w-56">
+              <select
+                value={packagingType}
+                onChange={(e) =>
+                  setPackagingType(e.target.value as "TUBES" | "JAR" | "TUBE + JAR")
+                }
+                className="w-full pl-4 pr-10 py-2.5 rounded-xl bg-slate-950 border border-slate-700/80 text-white text-xs font-bold uppercase tracking-wider focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all appearance-none cursor-pointer"
+              >
+                <option value="TUBES" className="bg-slate-900 text-white py-1">
+                  TUBES
+                </option>
+                <option value="JAR" className="bg-slate-900 text-white py-1">
+                  JAR
+                </option>
+                <option value="TUBE + JAR" className="bg-slate-900 text-white py-1">
+                  TUBE + JAR
+                </option>
+              </select>
+              <ChevronDown className="w-4 h-4 text-slate-400 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
+            </div>
           </div>
         </div>
       </div>
@@ -926,29 +1087,29 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
               return (
                 <div
                   key={lineItem.id}
-                  className={`p-4 rounded-xl border transition-all ${isExceeded
+                  className={`p-4 sm:p-5 rounded-2xl border transition-all ${isExceeded
                     ? "border-rose-500/50 bg-rose-500/5"
                     : "border-slate-800 bg-slate-900/60 hover:border-slate-700/80"
-                    } flex flex-col lg:flex-row items-start lg:items-center gap-4`}
+                    } flex flex-col xl:flex-row xl:items-center gap-3.5`}
                 >
                   {/* Row Index */}
                   <div className="flex items-center gap-3 shrink-0 text-xs font-mono text-slate-500">
-                    <span className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-slate-300 font-semibold">
+                    <span className="w-6 h-6 rounded-full bg-slate-800 border border-slate-700/60 flex items-center justify-center text-slate-300 font-semibold">
                       {index + 1}
                     </span>
                   </div>
 
-                  {/* Product Details Display */}
-                  <div className="flex-1 min-w-0 w-full">
-                    <p className="text-sm font-semibold text-white truncate">
+                  {/* Product Details Display - Full title without truncate */}
+                  <div className="flex-1 min-w-[200px] lg:min-w-[240px]">
+                    <h4 className="text-sm font-semibold text-white leading-snug break-words">
                       {productTitle}
-                    </p>
-                    <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5 flex-wrap">
+                    </h4>
+                    <div className="flex items-center gap-2 text-xs text-slate-400 mt-1 flex-wrap">
                       {variantTitle && variantTitle !== "Default Title" && (
-                        <span>{variantTitle}</span>
+                        <span className="text-slate-300 font-medium">{variantTitle}</span>
                       )}
                       {sku && (
-                        <span className="font-mono text-[11px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">
+                        <span className="font-mono text-[11px] bg-slate-800/90 px-1.5 py-0.5 rounded text-slate-400 border border-slate-700/50">
                           SKU: {sku}
                         </span>
                       )}
@@ -960,23 +1121,78 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
 
                   {/* Available Stock Indicator */}
                   <div className="w-full sm:w-28 shrink-0">
-                    <span className="block text-[11px] font-medium text-slate-400 mb-1">
-                      Current Stock
-                    </span>
+                    <div className="h-5 flex items-center justify-center mb-1">
+                      <span className="text-[11px] font-medium text-slate-400">
+                        Current Stock
+                      </span>
+                    </div>
                     <div
-                      className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold font-mono border text-center ${maxStock > 0
+                      className={`h-9 px-2.5 rounded-lg text-xs font-semibold font-mono border flex items-center justify-center ${maxStock > 0
                         ? "bg-slate-800/80 text-emerald-400 border-slate-700/60"
                         : "bg-rose-500/10 text-rose-400 border-rose-500/30"
                         }`}
                     >
-                      {maxStock} in stock
+                      {maxStock.toLocaleString()} in stock
                     </div>
                   </div>
 
+                  {/* MANUAL PACK SIZE SELECTOR */}
+                  <div className="w-full sm:w-32 shrink-0">
+                    <div className="h-5 flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-medium text-slate-300">
+                        Pack Size
+                      </label>
+                      {!COMMON_PACK_SIZES.includes(lineItem.packSize) && (
+                        <span className="text-[10px] text-amber-400 font-mono">Custom</span>
+                      )}
+                    </div>
+                    {COMMON_PACK_SIZES.includes(lineItem.packSize) || !lineItem.packSize ? (
+                      <select
+                        value={lineItem.packSize || "100ml"}
+                        onChange={(e) => {
+                          if (e.target.value === "__CUSTOM__") {
+                            handleUpdatePackSize(lineItem.id, "");
+                          } else {
+                            handleUpdatePackSize(lineItem.id, e.target.value);
+                          }
+                        }}
+                        className="w-full h-9 px-2.5 rounded-lg bg-slate-950 border border-slate-700/80 text-xs font-mono text-white focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 transition-all cursor-pointer font-medium"
+                      >
+                        {COMMON_PACK_SIZES.map((size) => (
+                          <option key={size} value={size} className="bg-slate-900 text-white">
+                            {size}
+                          </option>
+                        ))}
+                        <option value="__CUSTOM__" className="bg-slate-900 text-emerald-400 font-semibold">
+                          + Custom...
+                        </option>
+                      </select>
+                    ) : (
+                      <div className="relative">
+                        <input
+                          type="text"
+                          autoFocus
+                          value={lineItem.packSize}
+                          onChange={(e) => handleUpdatePackSize(lineItem.id, e.target.value)}
+                          placeholder="e.g. 80ml"
+                          className="w-full h-9 pl-2.5 pr-8 rounded-lg bg-slate-950 border border-emerald-500/60 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all font-medium"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleUpdatePackSize(lineItem.id, "100ml")}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
+                          title="Switch to standard presets"
+                        >
+                          List
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
                   {/* CHANGEABLE UNIT PRICE INPUT */}
-                  <div className="w-full sm:w-36 shrink-0">
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="block text-[11px] font-medium text-slate-300">
+                  <div className="w-full sm:w-32 shrink-0">
+                    <div className="h-5 flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-medium text-slate-300">
                         Unit Price (Rs)
                       </label>
                       {isPriceCustomized && (
@@ -1001,7 +1217,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                         step="any"
                         value={lineItem.price === 0 ? "0" : lineItem.price || ""}
                         onChange={(e) => handleUpdatePrice(lineItem.id, e.target.value)}
-                        className={`w-full pl-8 pr-2.5 py-1.5 rounded-lg bg-slate-950 border text-sm font-mono text-right focus:outline-none transition-all ${isPriceCustomized
+                        className={`w-full h-9 pl-8 pr-2.5 rounded-lg bg-slate-950 border text-sm font-mono text-right focus:outline-none transition-all ${isPriceCustomized
                           ? "border-amber-500/80 text-amber-300 focus:ring-1 focus:ring-amber-500/50"
                           : "border-slate-700/80 text-white focus:ring-1 focus:ring-emerald-500/50"
                           }`}
@@ -1010,9 +1226,9 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                   </div>
 
                   {/* Dispatch Quantity Input with Stepper Controls */}
-                  <div className="w-full sm:w-44 shrink-0">
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="block text-[11px] font-medium text-slate-400">
+                  <div className="w-full sm:w-36 shrink-0">
+                    <div className="h-5 flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-medium text-slate-400">
                         Dispatch Qty
                       </label>
                       {maxStock > 0 && (
@@ -1030,7 +1246,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                         type="button"
                         onClick={() => handleAdjustQuantity(lineItem.id, -1)}
                         disabled={lineItem.quantity <= 1}
-                        className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 border border-slate-700 text-slate-300 flex items-center justify-center transition-colors shrink-0"
+                        className="w-9 h-9 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 border border-slate-700 text-slate-300 flex items-center justify-center transition-colors shrink-0"
                       >
                         <Minus className="w-3.5 h-3.5" />
                       </button>
@@ -1041,7 +1257,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                         max={maxStock}
                         value={lineItem.quantity || ""}
                         onChange={(e) => handleUpdateQuantity(lineItem.id, e.target.value)}
-                        className={`w-full px-2 py-1.5 rounded-lg bg-slate-950 border text-sm font-mono text-center focus:outline-none transition-all ${isExceeded
+                        className={`w-full h-9 px-2 rounded-lg bg-slate-950 border text-sm font-mono text-center focus:outline-none transition-all ${isExceeded
                           ? "border-rose-500 text-rose-300 focus:ring-2 focus:ring-rose-500/40"
                           : "border-slate-700/80 text-white focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500"
                           }`}
@@ -1051,7 +1267,7 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                         type="button"
                         onClick={() => handleAdjustQuantity(lineItem.id, 1)}
                         disabled={lineItem.quantity >= maxStock}
-                        className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 border border-slate-700 text-slate-300 flex items-center justify-center transition-colors shrink-0"
+                        className="w-9 h-9 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 border border-slate-700 text-slate-300 flex items-center justify-center transition-colors shrink-0"
                       >
                         <Plus className="w-3.5 h-3.5" />
                       </button>
@@ -1065,17 +1281,21 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
                   </div>
 
                   {/* Line Total */}
-                  <div className="w-full sm:w-32 shrink-0 text-right">
-                    <span className="block text-[11px] font-medium text-slate-400 mb-1">
-                      Line Total
-                    </span>
-                    <p className="text-sm font-mono font-bold text-white pt-1">
-                      Rs {lineTotal.toLocaleString()}
-                    </p>
+                  <div className="w-full sm:w-28 shrink-0 text-right">
+                    <div className="h-5 flex items-center justify-end mb-1">
+                      <span className="text-[11px] font-medium text-slate-400">
+                        Line Total
+                      </span>
+                    </div>
+                    <div className="h-9 flex items-center justify-end">
+                      <p className="text-sm font-mono font-bold text-white">
+                        Rs {lineTotal.toLocaleString()}
+                      </p>
+                    </div>
                   </div>
 
                   {/* Remove Button */}
-                  <div className="self-end lg:self-center shrink-0 pt-1 lg:pt-4">
+                  <div className="self-end xl:self-center shrink-0 pt-1 xl:pt-5">
                     <button
                       type="button"
                       onClick={() => handleRemoveItem(lineItem.id)}
@@ -1321,7 +1541,11 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
 
         <div className="flex items-center gap-3 w-full md:w-auto justify-end">
           <Link
-            href="/dashboard?tab=inventory"
+            href={
+              isEditMode && initialData
+                ? `/dashboard/dispatch/${initialData.dispatchId}`
+                : "/dashboard/dispatch/history"
+            }
             className="px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 text-xs font-medium transition-all"
           >
             Cancel
@@ -1330,17 +1554,21 @@ export default function DispatchForm({ availableItems }: DispatchFormProps) {
           <button
             type="submit"
             disabled={isSubmitting || items.length === 0 || totalQuantity <= 0 || hasExceededStock}
-            className="px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm transition-all shadow-lg shadow-emerald-500/25 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            className={`px-6 py-2.5 rounded-xl font-bold text-sm transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
+              isEditMode
+                ? "bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-500/25"
+                : "bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/25"
+            }`}
           >
             {isSubmitting ? (
               <>
                 <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-                Deducting Stock &amp; Syncing...
+                {isEditMode ? "Updating & Reconciling Stock..." : "Deducting Stock & Syncing..."}
               </>
             ) : (
               <>
                 <CheckCircle2 className="w-4 h-4 stroke-[2.5]" />
-                Confirm &amp; Dispatch Stock
+                {isEditMode ? "Save Changes & Update Receipt" : "Confirm & Dispatch Stock"}
               </>
             )}
           </button>

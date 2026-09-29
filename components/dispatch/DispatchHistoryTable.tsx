@@ -13,10 +13,13 @@ import {
   Clock,
   CheckCircle2,
   X,
-  SlidersHorizontal,
+  Pencil,
+  Printer,
+  Check,
 } from "lucide-react";
 import DeleteDispatchButton from "@/components/dispatch/DeleteDispatchButton";
 import DispatchStatusDropdown from "@/components/dispatch/DispatchStatusDropdown";
+import DispatchPrintStatusBadge from "@/components/dispatch/DispatchPrintStatusBadge";
 
 export interface RawDispatchRecord {
   id: string;
@@ -33,6 +36,7 @@ interface DispatchHistoryTableProps {
 export default function DispatchHistoryTable({ initialDispatches }: DispatchHistoryTableProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "unpaid" | "paid">("all");
+  const [printFilter, setPrintFilter] = useState<"all" | "not_printed" | "printed">("all");
 
   // Process raw records with parsed metadata
   const parsedRecords = useMemo(() => {
@@ -41,6 +45,8 @@ export default function DispatchHistoryTable({ initialDispatches }: DispatchHist
       let totalAmountVal: number | null = null;
       let hasDiscount = false;
       let paymentStatus: "paid" | "unpaid" = "unpaid";
+      let isPrinted = false;
+      let printedAt: string | null = null;
       let address = "";
       let phone = "";
       let customDateStr: string | null = null;
@@ -51,6 +57,8 @@ export default function DispatchHistoryTable({ initialDispatches }: DispatchHist
           if (parsed && typeof parsed === "object") {
             displayRemarks = parsed.text || "—";
             paymentStatus = parsed.paymentStatus === "paid" ? "paid" : "unpaid";
+            isPrinted = parsed.isPrinted === true;
+            printedAt = parsed.printedAt || null;
             if (typeof parsed.dispatchDate === "string" && parsed.dispatchDate.trim()) {
               customDateStr = parsed.dispatchDate.trim();
             }
@@ -95,6 +103,8 @@ export default function DispatchHistoryTable({ initialDispatches }: DispatchHist
         totalAmountVal,
         hasDiscount,
         paymentStatus,
+        isPrinted,
+        printedAt,
         address,
         phone,
         formattedDate,
@@ -102,26 +112,38 @@ export default function DispatchHistoryTable({ initialDispatches }: DispatchHist
     });
   }, [initialDispatches]);
 
-  // Counts for status filters
+  // Counts for status and print filters
   const counts = useMemo(() => {
     let unpaid = 0;
     let paid = 0;
+    let printed = 0;
+    let notPrinted = 0;
     for (const r of parsedRecords) {
       if (r.paymentStatus === "paid") paid++;
       else unpaid++;
+      if (r.isPrinted) printed++;
+      else notPrinted++;
     }
-    return { all: parsedRecords.length, unpaid, paid };
+    return { all: parsedRecords.length, unpaid, paid, printed, notPrinted };
   }, [parsedRecords]);
 
-  // Filter records based on search and status
+  // Filter records based on search, payment status, and print status
   const filteredRecords = useMemo(() => {
     return parsedRecords.filter((item) => {
-      // 1. Status filter
+      // 1. Payment status filter
       if (statusFilter !== "all" && item.paymentStatus !== statusFilter) {
         return false;
       }
 
-      // 2. Search filter
+      // 2. Print status filter
+      if (printFilter === "printed" && !item.isPrinted) {
+        return false;
+      }
+      if (printFilter === "not_printed" && item.isPrinted) {
+        return false;
+      }
+
+      // 3. Search filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const matchRecipient = item.recipient_name.toLowerCase().includes(q);
@@ -134,76 +156,146 @@ export default function DispatchHistoryTable({ initialDispatches }: DispatchHist
 
       return true;
     });
-  }, [parsedRecords, statusFilter, searchQuery]);
+  }, [parsedRecords, statusFilter, printFilter, searchQuery]);
 
   return (
     <div className="rounded-2xl border border-slate-800/80 bg-[#0c1220]/70 backdrop-blur-sm shadow-xl overflow-hidden flex flex-col" style={{ height: "100%" }}>
-      {/* Controls Bar: Search & Status Filter Options */}
-      <div className="p-4 sm:px-6 sm:py-4 border-b border-slate-800/80 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        {/* Status Option Tabs */}
-        <div className="flex items-center gap-1.5 bg-slate-900/90 p-1 rounded-xl border border-slate-800 self-start">
-          <button
-            type="button"
-            onClick={() => setStatusFilter("all")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${statusFilter === "all"
-              ? "bg-slate-800 text-white shadow-sm"
-              : "text-slate-400 hover:text-white"
+      {/* Controls Bar: Search & Status Filters */}
+      <div className="p-4 sm:px-6 sm:py-4 border-b border-slate-800/80 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+        {/* Filter Groups */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Payment Status Tabs */}
+          <div className="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800">
+            <button
+              type="button"
+              onClick={() => setStatusFilter("all")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                statusFilter === "all"
+                  ? "bg-slate-800 text-white shadow-sm"
+                  : "text-slate-400 hover:text-white"
               }`}
-          >
-            <span>All</span>
-            <span
-              className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${statusFilter === "all"
-                ? "bg-slate-700 text-slate-200"
-                : "bg-slate-800 text-slate-400"
-                }`}
             >
-              {counts.all}
-            </span>
-          </button>
+              <span>All</span>
+              <span
+                className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                  statusFilter === "all"
+                    ? "bg-slate-700 text-slate-200"
+                    : "bg-slate-800 text-slate-400"
+                }`}
+              >
+                {counts.all}
+              </span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setStatusFilter("unpaid")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${statusFilter === "unpaid"
-              ? "bg-amber-500/20 text-amber-300 border border-amber-500/30 shadow-sm"
-              : "text-slate-400 hover:text-amber-400"
+            <button
+              type="button"
+              onClick={() => setStatusFilter("unpaid")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                statusFilter === "unpaid"
+                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/30 shadow-sm"
+                  : "text-slate-400 hover:text-amber-400"
               }`}
-          >
-            <Clock className="w-3.5 h-3.5 text-amber-400" />
-            <span>Unpaid</span>
-            <span
-              className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${statusFilter === "unpaid"
-                ? "bg-amber-500/30 text-amber-200"
-                : "bg-slate-800 text-slate-400"
-                }`}
             >
-              {counts.unpaid}
-            </span>
-          </button>
+              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              <span>Unpaid</span>
+              <span
+                className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                  statusFilter === "unpaid"
+                    ? "bg-amber-500/30 text-amber-200"
+                    : "bg-slate-800 text-slate-400"
+                }`}
+              >
+                {counts.unpaid}
+              </span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setStatusFilter("paid")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${statusFilter === "paid"
-              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shadow-sm"
-              : "text-slate-400 hover:text-emerald-400"
+            <button
+              type="button"
+              onClick={() => setStatusFilter("paid")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                statusFilter === "paid"
+                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shadow-sm"
+                  : "text-slate-400 hover:text-emerald-400"
               }`}
-          >
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Paid</span>
-            <span
-              className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${statusFilter === "paid"
-                ? "bg-emerald-500/30 text-emerald-200"
-                : "bg-slate-800 text-slate-400"
-                }`}
             >
-              {counts.paid}
-            </span>
-          </button>
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Paid</span>
+              <span
+                className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                  statusFilter === "paid"
+                    ? "bg-emerald-500/30 text-emerald-200"
+                    : "bg-slate-800 text-slate-400"
+                }`}
+              >
+                {counts.paid}
+              </span>
+            </button>
+          </div>
+
+          {/* Print Status Tabs */}
+          <div className="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800">
+            <button
+              type="button"
+              onClick={() => setPrintFilter("all")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                printFilter === "all"
+                  ? "bg-slate-800 text-white shadow-sm"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <span>All Print</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPrintFilter("not_printed")}
+              title="Show receipts that have not been printed yet"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                printFilter === "not_printed"
+                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/30 shadow-sm"
+                  : "text-slate-400 hover:text-amber-300"
+              }`}
+            >
+              <Printer className="w-3.5 h-3.5 text-amber-400" />
+              <span>Not Printed</span>
+              <span
+                className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                  printFilter === "not_printed"
+                    ? "bg-amber-500/30 text-amber-200"
+                    : "bg-slate-800 text-slate-400"
+                }`}
+              >
+                {counts.notPrinted}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPrintFilter("printed")}
+              title="Show receipts that have already been printed"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                printFilter === "printed"
+                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shadow-sm"
+                  : "text-slate-400 hover:text-emerald-400"
+              }`}
+            >
+              <Check className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Printed</span>
+              <span
+                className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                  printFilter === "printed"
+                    ? "bg-emerald-500/30 text-emerald-200"
+                    : "bg-slate-800 text-slate-400"
+                }`}
+              >
+                {counts.printed}
+              </span>
+            </button>
+          </div>
         </div>
 
         {/* Search Bar */}
-        <div className="relative w-full md:w-72">
+        <div className="relative w-full xl:w-72">
           <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
@@ -230,13 +322,14 @@ export default function DispatchHistoryTable({ initialDispatches }: DispatchHist
           <table className="w-full text-left border-collapse text-sm">
             <thead>
               <tr className="border-b border-slate-800 bg-slate-900/50 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                <th className="py-3 px-6">Date &amp; Time</th>
-                <th className="py-3 px-6">Recipient &amp; Contact</th>
-                <th className="py-3 px-6">Total Units</th>
-                <th className="py-3 px-6">Payment Status</th>
-                <th className="py-3 px-6">Total Value</th>
-                <th className="py-3 px-6">Remarks / Notes</th>
-                <th className="py-3 px-6 text-right">Actions</th>
+                <th className="py-3 px-5">Date &amp; Time</th>
+                <th className="py-3 px-5">Recipient &amp; Contact</th>
+                <th className="py-3 px-5">Total Units</th>
+                <th className="py-3 px-5">Payment Status</th>
+                <th className="py-3 px-5">Print Status</th>
+                <th className="py-3 px-5">Total Value</th>
+                <th className="py-3 px-5">Remarks / Notes</th>
+                <th className="py-3 px-5 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 text-slate-200">
@@ -246,12 +339,12 @@ export default function DispatchHistoryTable({ initialDispatches }: DispatchHist
                   className="hover:bg-slate-800/30 transition-colors duration-100"
                 >
                   {/* Date & Time */}
-                  <td className="py-3.5 px-6 font-mono text-xs text-slate-300 whitespace-nowrap">
+                  <td className="py-3.5 px-5 font-mono text-xs text-slate-300 whitespace-nowrap">
                     {item.formattedDate}
                   </td>
 
                   {/* Recipient & Contact Info */}
-                  <td className="py-3.5 px-6">
+                  <td className="py-3.5 px-5">
                     <div className="font-semibold text-white">
                       {item.recipient_name}
                     </div>
@@ -270,20 +363,29 @@ export default function DispatchHistoryTable({ initialDispatches }: DispatchHist
                   </td>
 
                   {/* Total Units */}
-                  <td className="py-3.5 px-6 font-mono font-bold text-slate-200">
+                  <td className="py-3.5 px-5 font-mono font-bold text-slate-200">
                     {item.total_quantity}
                   </td>
 
-                  {/* Interactive Status Option */}
-                  <td className="py-3.5 px-6 whitespace-nowrap">
+                  {/* Interactive Payment Status */}
+                  <td className="py-3.5 px-5 whitespace-nowrap">
                     <DispatchStatusDropdown
                       dispatchId={item.id}
                       initialStatus={item.paymentStatus}
                     />
                   </td>
 
+                  {/* Interactive Print Status Badge */}
+                  <td className="py-3.5 px-5 whitespace-nowrap">
+                    <DispatchPrintStatusBadge
+                      dispatchId={item.id}
+                      initialIsPrinted={item.isPrinted}
+                      initialPrintedAt={item.printedAt}
+                    />
+                  </td>
+
                   {/* Total Value */}
-                  <td className="py-3.5 px-6 font-mono font-bold text-emerald-400 text-xs whitespace-nowrap">
+                  <td className="py-3.5 px-5 font-mono font-bold text-emerald-400 text-xs whitespace-nowrap">
                     {item.totalAmountVal !== null ? (
                       <div className="flex items-center gap-1.5">
                         <span>Rs {item.totalAmountVal.toLocaleString()}</span>
@@ -299,21 +401,32 @@ export default function DispatchHistoryTable({ initialDispatches }: DispatchHist
                   </td>
 
                   {/* Remarks / Notes */}
-                  <td className="py-3.5 px-6 text-xs text-slate-400 max-w-xs truncate" title={item.displayRemarks}>
+                  <td className="py-3.5 px-5 text-xs text-slate-400 max-w-xs truncate" title={item.displayRemarks}>
                     {item.displayRemarks}
                   </td>
 
-                  {/* Actions */}
-                  <td className="py-3.5 px-6 text-right whitespace-nowrap">
-                    <div className="flex items-center justify-end gap-2">
+                  {/* Actions: View, Edit, Delete */}
+                  <td className="py-3.5 px-5 text-right whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-1.5">
                       <Link
                         href={`/dashboard/dispatch/${item.id}`}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 hover:text-white transition-colors"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 hover:text-white transition-colors"
+                        title="View Delivery Challan Receipt"
                       >
                         <FileText className="w-3.5 h-3.5 text-emerald-400" />
                         <span>View</span>
                         <ArrowUpRight className="w-3 h-3 text-slate-400" />
                       </Link>
+
+                      <Link
+                        href={`/dashboard/dispatch/${item.id}/edit`}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:text-amber-200 border border-amber-500/20 hover:border-amber-500/30 text-xs font-medium transition-all shadow-sm active:scale-95"
+                        title="Edit this dispatch receipt"
+                      >
+                        <Pencil className="w-3.5 h-3.5 stroke-[2]" />
+                        <span>Edit</span>
+                      </Link>
+
                       <DeleteDispatchButton
                         dispatchId={item.id}
                         recipientName={item.recipient_name}
@@ -332,22 +445,23 @@ export default function DispatchHistoryTable({ initialDispatches }: DispatchHist
           </div>
           <div>
             <p className="text-sm font-semibold text-slate-200">
-              {searchQuery || statusFilter !== "all"
+              {searchQuery || statusFilter !== "all" || printFilter !== "all"
                 ? "No Dispatches Match Your Filter"
                 : "No Dispatches Recorded Yet"}
             </p>
             <p className="text-xs text-slate-400 max-w-sm mx-auto mt-1">
-              {searchQuery || statusFilter !== "all"
-                ? "Try clearing your search query or switching status filters."
+              {searchQuery || statusFilter !== "all" || printFilter !== "all"
+                ? "Try clearing your search query or switching status/print filters."
                 : "When you record manual distributor shipments, their receipts and inventory logs will appear here."}
             </p>
           </div>
-          {searchQuery || statusFilter !== "all" ? (
+          {searchQuery || statusFilter !== "all" || printFilter !== "all" ? (
             <button
               type="button"
               onClick={() => {
                 setSearchQuery("");
                 setStatusFilter("all");
+                setPrintFilter("all");
               }}
               className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-all"
             >

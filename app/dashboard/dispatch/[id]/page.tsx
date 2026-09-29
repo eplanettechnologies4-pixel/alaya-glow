@@ -5,10 +5,12 @@ import { supabaseServer } from "@/lib/supabase/server";
 import PrintButton from "@/components/dispatch/PrintButton";
 import DeleteDispatchButton from "@/components/dispatch/DeleteDispatchButton";
 import DispatchStatusDropdown from "@/components/dispatch/DispatchStatusDropdown";
+import DispatchPrintStatusBadge from "@/components/dispatch/DispatchPrintStatusBadge";
 import {
   ArrowLeft,
   CheckCircle2,
   History,
+  Pencil,
 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -87,9 +89,12 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
   let displayNotes = dispatch.notes || "";
   let paymentStatus: "paid" | "unpaid" = "unpaid";
   let paidAt: string | null = null;
+  let isPrinted = false;
+  let printedAt: string | null = null;
   let parsedAddress: string | null = null;
   let parsedPhone: string | null = null;
   let parsedDispatchDate: string | null = null;
+  let packagingType = "TUBES";
   let pricingData: {
     subtotal?: number;
     discount?: { type: "percentage" | "fixed"; value: number; amount: number };
@@ -104,7 +109,12 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
         displayNotes = parsed.text || "";
         paymentStatus = parsed.paymentStatus === "paid" ? "paid" : "unpaid";
         paidAt = parsed.paidAt || null;
+        isPrinted = parsed.isPrinted === true;
+        printedAt = parsed.printedAt || null;
         pricingData = parsed.pricing || null;
+        if (typeof parsed.packagingType === "string" && parsed.packagingType.trim()) {
+          packagingType = parsed.packagingType.trim().toUpperCase();
+        }
         if (typeof parsed.dispatchDate === "string" && parsed.dispatchDate.trim()) {
           parsedDispatchDate = parsed.dispatchDate.trim();
         }
@@ -123,12 +133,16 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
   const challanDate = formatChallanDate(parsedDispatchDate || dispatch.created_at);
 
   const pricingMap = new Map<string, { unitPrice: number; totalPrice: number }>();
+  const packSizeMap = new Map<string, string>();
   if (pricingData?.items) {
-    pricingData.items.forEach((pItem) => {
+    pricingData.items.forEach((pItem: any) => {
       pricingMap.set(pItem.variantId, {
         unitPrice: pItem.unitPrice,
         totalPrice: pItem.totalPrice,
       });
+      if (typeof pItem.packSize === "string" && pItem.packSize.trim()) {
+        packSizeMap.set(pItem.variantId, pItem.packSize.trim());
+      }
     });
   }
 
@@ -138,14 +152,17 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
     const product = variant?.products;
     const productTitle = product?.title || "Product";
 
-    // Extract pack size (e.g. "100ml" or variant title)
-    let packSize = "100ml";
-    if (variant?.title && variant.title !== "Default Title") {
-      packSize = variant.title;
-    } else {
-      const sizeMatch = productTitle.match(/\b(\d+\s*(?:ml|g|gm|kg|pcs|oz))\b/i);
-      if (sizeMatch) {
-        packSize = sizeMatch[1];
+    // Extract pack size (manual user selection if available, otherwise variant title/product size pattern)
+    const customPackSize = packSizeMap.get(row.variant_id);
+    let packSize = customPackSize || "100ml";
+    if (!customPackSize) {
+      if (variant?.title && variant.title !== "Default Title") {
+        packSize = variant.title;
+      } else {
+        const sizeMatch = productTitle.match(/\b(\d+\s*(?:ml|g|gm|kg|pcs|oz))\b/i);
+        if (sizeMatch) {
+          packSize = sizeMatch[1];
+        }
       }
     }
 
@@ -244,24 +261,37 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
             </Link>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
             <div className="flex items-center gap-2">
               <DispatchStatusDropdown
                 dispatchId={dispatch.id}
                 initialStatus={paymentStatus}
               />
+              <DispatchPrintStatusBadge
+                dispatchId={dispatch.id}
+                initialIsPrinted={isPrinted}
+                initialPrintedAt={printedAt}
+              />
             </div>
-            <div className="hidden sm:flex items-center gap-1.5 text-xs text-emerald-400 font-medium bg-emerald-500/10 px-3 py-1.5 rounded-lg border border-emerald-500/20">
+            <div className="hidden lg:flex items-center gap-1.5 text-xs text-emerald-400 font-medium bg-emerald-500/10 px-3 py-1.5 rounded-lg border border-emerald-500/20">
               <CheckCircle2 className="w-4 h-4" />
               Shopify Synced
             </div>
+            <Link
+              href={`/dashboard/dispatch/${dispatch.id}/edit`}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-amber-200 border border-amber-500/30 hover:border-amber-500/40 text-xs font-semibold transition-all shadow-sm active:scale-95"
+              title="Edit this dispatch receipt"
+            >
+              <Pencil className="w-3.5 h-3.5 stroke-[2]" />
+              <span>Edit Receipt</span>
+            </Link>
             <DeleteDispatchButton
               dispatchId={dispatch.id}
               recipientName={dispatch.recipient_name}
               redirectOnDelete="/dashboard/dispatch/history"
               variant="header"
             />
-            <PrintButton />
+            <PrintButton dispatchId={dispatch.id} initialIsPrinted={isPrinted} />
           </div>
         </div>
 
@@ -391,7 +421,7 @@ export default async function DispatchReceiptPage({ params }: ReceiptPageProps) 
                       {totalCalculatedUnits}
                     </td>
                     <td className="py-2 px-3 text-center font-bold text-stone-800 uppercase text-[10px] tracking-wider">
-                      TUBES
+                      {packagingType}
                     </td>
                     <td className="py-2 px-3 text-center font-bold text-stone-900">
                       {subtotalAmount.toLocaleString()}
