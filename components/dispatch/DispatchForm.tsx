@@ -57,6 +57,7 @@ export const COMMON_PACK_SIZES = [
   "100g",
   "Jar",
   "Tube",
+  "Bundle",
 ];
 
 export interface DispatchEditItem {
